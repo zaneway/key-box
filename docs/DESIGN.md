@@ -16,8 +16,8 @@
 - ✅ **离线运行**: 无需网络连接，数据完全本地化
 
 ### 1.3 版本说明
-- **CLI 版本** (`sec-keys-client`): 适合命令行用户和服务器环境
-- **GUI 版本** (`sec-keys-gui`): 提供友好的图形界面，基于 Fyne 框架
+- **CLI 版本** (`key-box-client`): 适合命令行用户和服务器环境
+- **GUI 版本** (`key-box-gui`): 提供友好的图形界面，基于 Fyne 框架
 
 ## 2. 系统架构
 
@@ -106,15 +106,15 @@
 2. **Salt 提示**: 弹出对话框，显示当前 Salt 值（可复制）。
 3. **用户确认**: 用户保存 Salt 值后点击确认。
 4. **选择路径**: 系统弹出文件保存对话框。
-5. **导出数据**: 复制 `~/.sec-keys.db` 到目标位置。
-6. **文件命名**: `sec-keys-backup-{timestamp}.db`。
+5. **导出数据**: 复制 `~/.key-box.db` 到目标位置。
+6. **文件命名**: `key-box-backup-{timestamp}.db`。
 
 #### 2.3.6 数据恢复
 1. **警告提示**: 提醒用户恢复将覆盖当前数据。
 2. **环境检查提示**: 确保 `SEC_APP_SALT` 与备份时一致。
 3. **选择文件**: 用户选择备份的 `.db` 文件。
-4. **安全备份**: 将当前数据库重命名为 `.sec-keys.db.before-restore`。
-5. **写入恢复**: 将备份内容写入 `~/.sec-keys.db`。
+4. **安全备份**: 将当前数据库重命名为 `.key-box.db.before-restore`。
+5. **写入恢复**: 将备份内容写入 `~/.key-box.db`。
 6. **回滚机制**: 恢复失败时自动还原旧数据库。
 7. **重启建议**: 提示用户重启应用加载新数据。
 
@@ -235,7 +235,7 @@
 ### 4.1 威胁模型
 | 攻击场景 | 攻击者获取 | 防御措施 | 结果 |
 |:---|:---|:---|:---|
-| **数据库泄露** | `~/.sec-keys.db` | 所有密钥均加密存储 | ❌ 无法解密 |
+| **数据库泄露** | `~/.key-box.db` | 所有密钥均加密存储 | ❌ 无法解密 |
 | **环境变量泄露** | `SEC_APP_SALT` | 仍需数据库文件 | ❌ 无法解密 |
 | **源码泄露** | `FixedKeyQ` | 仍需环境变量 | ❌ 无法解密 |
 | **社工答案** | 密保答案 | 需正确的 Salt 和数据库 | ❌ 无法解密 |
@@ -347,8 +347,8 @@ if os.Getenv("SEC_APP_SALT") == "" {
 
 **实现**:
 ```go
-fileName := fmt.Sprintf("sec-keys-backup-%s.db", time.Now().Format("20060102-150405"))
-// 示例: sec-keys-backup-20260131-143025.db
+fileName := fmt.Sprintf("key-box-backup-%s.db", time.Now().Format("20060102-150405"))
+// 示例: key-box-backup-20260131-143025.db
 ```
 
 **建议**:
@@ -404,10 +404,10 @@ func VerifyOTP(secretKeyB []byte, inputCode string) bool {
 **编译项目**:
 ```bash
 # CLI 版本
-go build -o sec-keys-client cmd/client/main.go
+go build -o key-box-client cmd/client/main.go
 
 # GUI 版本
-go build -o sec-keys-gui cmd/gui/main.go
+go build -o key-box-gui cmd/gui/main.go
 ```
 
 **设置环境变量**:
@@ -422,7 +422,7 @@ $env:SEC_APP_SALT="my-secret-salt-value-2026"
 ### 6.2 功能测试流程
 
 #### 测试用例 1: 用户注册
-1. 运行程序: `./sec-keys-client`
+1. 运行程序: `./key-box-client`
 2. 选择 "1. 注册"
 3. 输入:
    - 用户名: `testuser`
@@ -432,7 +432,7 @@ $env:SEC_APP_SALT="my-secret-salt-value-2026"
 4. **预期结果**:
    - 显示 "注册成功!"
    - 输出 Base32 格式的 Secret Key B (如 `JBSWY3DPEHPK3PXP...`)
-   - 数据库文件 `.sec-keys.db` 生成/更新。
+   - 数据库文件 `.key-box.db` 生成/更新。
 
 #### 测试用例 2: OTP 验证与登录
 1. 准备: 将注册时获取的 Secret Key B 导入 Google Authenticator 或使用在线 TOTP 生成器生成 6 位验证码。
@@ -475,7 +475,7 @@ $env:SEC_APP_SALT="my-secret-salt-value-2026"
    - 弹出对话框显示当前 `SEC_APP_SALT` 值
    - 提示用户务必保存该值
    - 点击确认后，选择保存路径
-   - 数据库文件成功导出（文件名如 `sec-keys-backup-20260131-120000.db`）
+   - 数据库文件成功导出（文件名如 `key-box-backup-20260131-120000.db`）
 3. **恢复测试**:
    - 点击 "恢复数据" 按钮
    - 弹出警告对话框，提示将覆盖当前数据
@@ -486,7 +486,7 @@ $env:SEC_APP_SALT="my-secret-salt-value-2026"
    - 登录账号，所有数据正常显示
 
 ### 6.3 安全验证
-- **SQLite 文件检查**: 使用 `sqlite3 .sec-keys.db` 查看数据。
+- **SQLite 文件检查**: 使用 `sqlite3 .key-box.db` 查看数据。
   - `SELECT * FROM users;`
   - 确认 `enc_m`, `enc_b`, `enc_c` 均为二进制乱码 (Blob)，不可读。
   - 确认 `salt` 存在。
@@ -502,15 +502,15 @@ $env:SEC_APP_SALT="my-secret-salt-value-2026"
 1. **前置检查**: 检查 `SEC_APP_SALT` 环境变量是否设置。
 2. **展示警告**: 弹出对话框显示当前 Salt 值，强调其重要性。
 3. **用户确认**: 用户阅读警告并确认后，选择保存位置。
-4. **导出数据库**: 直接复制 `~/.sec-keys.db` 到用户指定位置。
-5. **文件命名**: 自动生成带时间戳的文件名，如 `sec-keys-backup-20260131-120530.db`。
+4. **导出数据库**: 直接复制 `~/.key-box.db` 到用户指定位置。
+5. **文件命名**: 自动生成带时间戳的文件名，如 `key-box-backup-20260131-120530.db`。
 
 ### 7.2 恢复流程
 1. **警告提示**: 提醒用户恢复操作将覆盖当前数据。
 2. **环境检查**: 提示用户确保 `SEC_APP_SALT` 与备份时一致。
 3. **选择文件**: 用户选择备份的 `.db` 文件。
-4. **自动备份**: 在覆盖前，将当前数据库重命名为 `.sec-keys.db.before-restore`。
-5. **写入数据**: 将备份文件内容写入 `~/.sec-keys.db`。
+4. **自动备份**: 在覆盖前，将当前数据库重命名为 `.key-box.db.before-restore`。
+5. **写入数据**: 将备份文件内容写入 `~/.key-box.db`。
 6. **重启提示**: 建议用户重启应用以加载新数据。
 
 ### 7.3 安全注意事项
@@ -523,7 +523,7 @@ $env:SEC_APP_SALT="my-secret-salt-value-2026"
 
 ### 8.1 项目结构
 ```
-sec-keys/
+key-box/
 ├── cmd/
 │   ├── client/           # CLI 客户端
 │   │   └── main.go       # 命令行入口
@@ -553,13 +553,13 @@ sec-keys/
 go mod tidy
 
 # 编译 CLI 版本
-go build -o sec-keys-client cmd/client/main.go
+go build -o key-box-client cmd/client/main.go
 
 # 编译 GUI 版本
-go build -o sec-keys-gui cmd/gui/main.go
+go build -o key-box-gui cmd/gui/main.go
 
 # Windows GUI 隐藏控制台窗口
-go build -ldflags -H=windowsgui -o sec-keys-gui.exe cmd/gui/main.go
+go build -ldflags -H=windowsgui -o key-box-gui.exe cmd/gui/main.go
 ```
 
 ### 8.3 运行方式
@@ -567,22 +567,22 @@ go build -ldflags -H=windowsgui -o sec-keys-gui.exe cmd/gui/main.go
 ```bash
 # Linux/Mac
 export SEC_APP_SALT="random-seed"
-./sec-keys-client
+./key-box-client
 
 # Windows PowerShell
 $env:SEC_APP_SALT="random-seed"
-.\sec-keys-client.exe
+.\key-box-client.exe
 ```
 
 **GUI 版本**:
 ```bash
 # Linux/Mac
 export SEC_APP_SALT="random-seed"
-./sec-keys-gui
+./key-box-gui
 
 # Windows PowerShell
 $env:SEC_APP_SALT="random-seed"
-.\sec-keys-gui.exe
+.\key-box-gui.exe
 
 # 或直接双击运行（首次会自动生成 Salt）
 ```

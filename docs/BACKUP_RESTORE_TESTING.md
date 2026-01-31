@@ -6,7 +6,7 @@
 ## 核心设计
 
 ### 备份机制
-1. **直接导出数据库**: 导出 `~/.sec-keys.db` 文件。
+1. **直接导出数据库**: 导出 `~/.key-box.db` 文件。
 2. **Salt 值提示**: 在备份前强制显示当前 `SEC_APP_SALT` 值。
 3. **用户确认**: 用户必须确认已保存 Salt 值才能继续。
 4. **文件命名**: 自动生成带时间戳的文件名，便于管理多个备份。
@@ -31,7 +31,7 @@
 4. 复制 Salt 值到记事本
 5. 点击 "确认并导出"
 6. 选择保存位置（如桌面）
-7. 验证生成的文件名格式：`sec-keys-backup-YYYYMMDD-HHMMSS.db`
+7. 验证生成的文件名格式：`key-box-backup-YYYYMMDD-HHMMSS.db`
 
 **预期结果**:
 - ✅ 对话框正确显示 Salt 值
@@ -54,11 +54,11 @@
 
 ### 场景 3: 正常恢复流程
 **前置条件**:
-- 有一个备份文件 `sec-keys-backup-xxx.db`
+- 有一个备份文件 `key-box-backup-xxx.db`
 - 已设置与备份时相同的 `SEC_APP_SALT`
 
 **测试步骤**:
-1. 关闭应用，删除或重命名 `~/.sec-keys.db`
+1. 关闭应用，删除或重命名 `~/.key-box.db`
 2. 设置 `export SEC_APP_SALT=test-salt-value`（与备份时一致）
 3. 启动应用
 4. 在登录界面点击 "恢复数据"（或通过菜单）
@@ -113,7 +113,7 @@
 ### 测试 1: 备份文件内容检查
 ```bash
 # 使用 SQLite 查看备份文件
-sqlite3 sec-keys-backup-xxx.db
+sqlite3 key-box-backup-xxx.db
 ```
 ```sql
 SELECT username, hex(enc_b), hex(enc_c) FROM users;

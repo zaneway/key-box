@@ -1,4 +1,4 @@
-module sec-keys
+module key-box
 
 go 1.24.0
 

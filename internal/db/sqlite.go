@@ -13,14 +13,14 @@ type DB struct {
 }
 
 // InitDB 初始化嵌入式 SQLite 数据库。
-// 默认路径: 用户主目录下的 .sec-keys.db
+// 默认路径: 用户主目录下的 .key-box.db
 func InitDB() (*DB, error) {
 	// Use a local file
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	dbPath := filepath.Join(home, ".sec-keys.db")
+	dbPath := filepath.Join(home, ".key-box.db")
 
 	conn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -134,4 +134,16 @@ func (db *DB) GetVaultItems(username string) ([]VaultItem, error) {
 		items = append(items, i)
 	}
 	return items, nil
+}
+
+func (db *DB) UpdateVaultItem(id int, site string, encData []byte) error {
+	stmt := `UPDATE vault SET site = ?, enc_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	_, err := db.Exec(stmt, site, encData, id)
+	return err
+}
+
+func (db *DB) DeleteVaultItem(id int) error {
+	stmt := `DELETE FROM vault WHERE id = ?`
+	_, err := db.Exec(stmt, id)
+	return err
 }

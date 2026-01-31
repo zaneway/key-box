@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"sec-keys/internal/crypto"
-	"sec-keys/internal/db"
+	"key-box/internal/crypto"
+	"key-box/internal/db"
 )
 
 type Service struct {
@@ -260,4 +260,21 @@ func (s *Service) ResetPassword(username, a1, a2, a3 string) (*RegisterResult, e
 	return &RegisterResult{
 		SecretKeyBBase32: crypto.EncodeKeyB(newKeyB),
 	}, nil
+}
+
+// GetUserInfo 获取用户完整信息（用于备份）
+func (s *Service) GetUserInfo(username string) (*db.User, error) {
+	return s.db.GetUser(username)
+}
+
+// RestoreUser 恢复用户信息（用于恢复备份）
+func (s *Service) RestoreUser(u *db.User) error {
+	return s.db.CreateUser(u)
+}
+
+// DeleteUser 删除用户（用于覆盖恢复）
+func (s *Service) DeleteUser(username string) error {
+	stmt := `DELETE FROM users WHERE username = ?`
+	_, err := s.db.Exec(stmt, username)
+	return err
 }

@@ -1,4 +1,4 @@
-# Local Password Manager (Sec-Keys)
+# Local Password Manager (Key-Box)
 
 一个基于 Go 语言开发的安全本地密码管理器。采用 Shamir's Secret Sharing (SSS)、AES-GCM、HKDF 和 TOTP 等现代密码学标准，确保您的账号密码安全存储。
 
@@ -19,7 +19,7 @@
 ### 1. 下载源码
 ```bash
 git clone <repository-url>
-cd sec-keys
+cd key-box
 ```
 
 ### 2. 下载依赖
@@ -32,30 +32,30 @@ go mod tidy
 #### 命令行版本 (CLI)
 **macOS / Linux:**
 ```bash
-go build -o sec-keys-client cmd/client/main.go
+go build -o key-box-client cmd/client/main.go
 ```
 **Windows:**
 ```powershell
-go build -o sec-keys-client.exe cmd/client/main.go
+go build -o key-box-client.exe cmd/client/main.go
 ```
 
 #### 图形界面版本 (GUI)
 **macOS / Linux:**
 ```bash
-go build -o sec-keys-gui cmd/gui/main.go
+go build -o key-box-gui cmd/gui/main.go
 ```
 **Windows:**
 ```powershell
-go build -o sec-keys-gui.exe cmd/gui/main.go
+go build -o key-box-gui.exe cmd/gui/main.go
 ```
 *注意：GUI 版本首次运行可能需要较长时间编译依赖。Windows 下编译 GUI 建议添加 `-ldflags -H=windowsgui` 参数以隐藏控制台窗口。*
 
 ## 🚀 使用指南 (GUI 版本)
 
 ### 1. 运行程序
-双击 `sec-keys-gui` 或在终端运行：
+双击 `key-box-gui` 或在终端运行：
 ```bash
-./sec-keys-gui
+./key-box-gui
 ```
 
 ### 2. 环境变量 (自动管理)
@@ -113,13 +113,13 @@ $env:SEC_APP_SALT="your-unique-secret-salt-2026"
 
 ### 2. 运行程序
 ```bash
-./sec-keys-client
+./key-box-client
 ```
 
 ## 📂 文件说明
-- `sec-keys-client`: 命令行客户端。
-- `sec-keys-gui`: 图形界面客户端。
-- `.sec-keys.db`: 加密数据库文件（默认生成在用户主目录 `~/.sec-keys.db`）。
+- `key-box-client`: 命令行客户端。
+- `key-box-gui`: 图形界面客户端。
+- `.key-box.db`: 加密数据库文件（默认生成在用户主目录 `~/.key-box.db`）。
 
 ## 🛡️ 安全架构简述
 - **密钥 A**: 由密保答案通过 SSS 算法合成，不存储。

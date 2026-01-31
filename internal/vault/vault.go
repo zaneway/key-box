@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"sec-keys/internal/crypto"
-	"sec-keys/internal/db"
+	"key-box/internal/crypto"
+	"key-box/internal/db"
 )
 
 type Manager struct {
@@ -86,4 +86,50 @@ func (m *Manager) ListItems(username string, keyC []byte) ([]VaultItem, error) {
 		})
 	}
 	return results, nil
+}
+
+// UpdateItem 更新已存储的密码条目。
+// 核心逻辑:
+// 1. 将新的明文数据序列化为 JSON。
+// 2. 使用 Key C 加密。
+// 3. 更新数据库记录。
+func (m *Manager) UpdateItem(keyC []byte, id int, site, itemUser, itemPass string) error {
+	data := ItemData{
+		Username: itemUser,
+		Password: itemPass,
+	}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	// 使用 Key C 加密实际数据
+	encData, err := crypto.EncryptAESGCM(keyC, jsonData)
+	if err != nil {
+		return err
+	}
+
+	return m.db.UpdateVaultItem(id, site, encData)
+}
+
+// DeleteItem 删除已存储的密码条目。
+func (m *Manager) DeleteItem(id int) error {
+	return m.db.DeleteVaultItem(id)
+}
+
+// DeleteAllItems 删除用户的所有密码条目（用于覆盖恢复）
+func (m *Manager) DeleteAllItems(username string) error {
+	stmt := `DELETE FROM vault WHERE username = ?`
+	_, err := m.db.Exec(stmt, username)
+	return err
+}
+
+// GetEncryptedItems 获取加密的密码条目（用于备份）
+func (m *Manager) GetEncryptedItems(username string) ([]db.VaultItem, error) {
+	return m.db.GetVaultItems(username)
+}
+
+// RestoreEncryptedItem 恢复加密的密码条目（用于恢复备份）
+func (m *Manager) RestoreEncryptedItem(username, site string, encData []byte) error {
+	return m.db.SaveVaultItem(username, site, encData)
 }

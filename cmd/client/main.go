@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"sec-keys/internal/auth"
-	"sec-keys/internal/db"
-	"sec-keys/internal/vault"
+	"key-box/internal/auth"
+	"key-box/internal/db"
+	"key-box/internal/vault"
 )
 
 var (

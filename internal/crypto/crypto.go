@@ -21,7 +21,7 @@ import (
 )
 
 // FixedKeyQ is the hardcoded key q.
-var FixedKeyQ = []byte("this-is-fixed-key-q-for-sec-keys-project-1234567890") // 32+ bytes
+var FixedKeyQ = []byte("this-is-fixed-key-q-for-key-box-project-1234567890") // 32+ bytes
 
 // GenerateRandomBytes generates n random bytes.
 func GenerateRandomBytes(n int) ([]byte, error) {
