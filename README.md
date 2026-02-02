@@ -2,6 +2,7 @@
 
 一个基于 Go 语言开发的安全本地密码管理器。采用 Shamir's Secret Sharing (SSS)、AES-GCM、HKDF 和 TOTP 等现代密码学标准，确保您的账号密码安全存储。
 
+
 ## ✨ 特性
 
 - **零知识证明架构**: 服务器（或本地数据库）不存储您的明文密码或密保答案。
@@ -70,6 +71,7 @@ go build -o key-box-gui.exe cmd/gui/main.go
 - **如果是首次运行且未配置**: 程序会自动生成一个安全的随机 Salt，并自动保存到配置文件 `~/.key-box.config`。
 - **配置文件优先**: 程序优先从 `~/.key-box.config` 读取 Salt，只有配置文件不存在时才读取环境变量 `SEC_APP_SALT`。
 - **跨设备迁移**: 如需在其他设备使用相同数据，请将 `~/.key-box.config` 文件复制过去，或手动设置环境变量 `SEC_APP_SALT` 为相同的值。
+- **OTP生成方式**: 使用[OTP生成工具](https://github.com/zaneway/HeTu),或使用[基础代码程序](https://github.com/zaneway/otp)
 
 ### 3. 功能操作
 界面分为三个标签页：
