@@ -663,10 +663,14 @@ func showVaultScreen() {
 					passEntry.Refresh()
 				})
 
-				// 给密码框添加深色背景
+				// 给密码框添加深色背景和固定宽度
 				passBg := canvas.NewRectangle(color.RGBA{R: 60, G: 60, B: 60, A: 255})
 				passBg.CornerRadius = 4
-				passWithBg := container.NewStack(passBg, passEntry)
+
+				// 使用透明占位符控制密码框最小宽度
+				passSpacer := canvas.NewRectangle(color.Transparent)
+				passSpacer.SetMinSize(fyne.NewSize(250, 1)) // 密码框宽度设为 250px
+				passWithBg := container.NewStack(passSpacer, passBg, passEntry)
 
 				// 密码框和切换按钮组合
 				passColumn := container.NewHBox(
