@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -19,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"key-box/internal/auth"
+	"key-box/internal/config"
 	"key-box/internal/db"
 	"key-box/internal/vault"
 )
@@ -41,8 +41,8 @@ func main() {
 	myApp = app.New()
 	myWindow = myApp.NewWindow("本地密码管理器 (Key-Box)")
 	myWindow.Resize(fyne.NewSize(600, 500))
-	//fmt.Println("key is :", os.Getenv("SEC_APP_SALT"))
-	// 1. Env Check & Init DB
+
+	// 1. Init Config & DB
 	checkEnvAndInit()
 
 	// 2. Show Main Menu (Login/Register)
@@ -53,14 +53,22 @@ func main() {
 
 func checkEnvAndInit() {
 	autoSalt := ""
-	if os.Getenv("SEC_APP_SALT") == "" {
+	salt, err := config.GetSalt()
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("读取配置失败: %v", err), myWindow)
+		return
+	}
+	if salt == "" {
 		b := make([]byte, 16)
 		if _, err := rand.Read(b); err != nil {
 			dialog.ShowError(fmt.Errorf("随机数生成失败: %v", err), myWindow)
 			return
 		}
 		autoSalt = hex.EncodeToString(b)
-		os.Setenv("SEC_APP_SALT", autoSalt)
+		if err := config.SaveSalt(autoSalt); err != nil {
+			dialog.ShowError(fmt.Errorf("保存配置失败: %v", err), myWindow)
+			return
+		}
 	}
 
 	database, err := db.InitDB()
@@ -73,30 +81,14 @@ func checkEnvAndInit() {
 	vaultManager = vault.NewManager(database)
 
 	if autoSalt != "" {
-		// Use a custom dialog with a copyable Entry for the Salt and instructions
-
-		msg := fmt.Sprintf("环境变量 SEC_APP_SALT 未设置。\n已生成临时 Salt (请务必保存！):")
-		saltEntry := widget.NewEntry()
-		saltEntry.SetText(autoSalt)
-		// saltEntry.Disable() // Disable makes it look gray, but usually still copyable?
-		// Actually in Fyne, Disable() might prevent interaction.
-		// Let's keep it enabled but ReadOnly if possible? Fyne Entry doesn't have ReadOnly prop directly exposed easily in v2.0
-		// But in newer Fyne versions, Disable() allows copy? Let's verify.
-		// Actually, standard pattern is NewEntry with text.
-
-		instruction := fmt.Sprintf("下次启动需配置环境变量:\nMac/Linux: export SEC_APP_SALT=\"%s\"\nWindows: $env:SEC_APP_SALT=\"%s\"", autoSalt, autoSalt)
-		instrEntry := widget.NewMultiLineEntry()
-		instrEntry.SetText(instruction)
-
+		// Salt 已自动保存到配置文件 ~/.key-box.config
+		msg := "已生成加密 Salt 并自动保存到配置文件。\n\n配置文件路径: ~/.key-box.config\n\n首次使用完成。"
 		content := container.NewVBox(
 			widget.NewLabel(msg),
-			saltEntry,
-			widget.NewLabel("配置命令 (可复制):"),
-			instrEntry,
 		)
 
 		fyne.CurrentApp().Lifecycle().SetOnStarted(func() {
-			dialog.ShowCustom("安全警告", "我知道了", content, myWindow)
+			dialog.ShowCustom("初始化完成", "我知道了", content, myWindow)
 		})
 	}
 }
