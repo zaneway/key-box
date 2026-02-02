@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -410,6 +411,115 @@ func showResetDialog() {
 	d.Show()
 }
 
+// truncateText 截断文本，如果超出最大长度则添加省略号
+func truncateText(text string, maxLen int) string {
+	runes := []rune(text)
+	if len(runes) <= maxLen {
+		return text
+	}
+	return string(runes[:maxLen]) + "..."
+}
+
+// createFixedWidthTextCell 创建固定宽度的文本单元格，支持点击查看完整内容
+func createFixedWidthTextCell(fullText string, maxChars int, width float32, style fyne.TextStyle) fyne.CanvasObject {
+	displayText := truncateText(fullText, maxChars)
+	isTruncated := len([]rune(fullText)) > maxChars
+
+	// 如果文本被截断，在末尾添加点击提示
+	if isTruncated {
+		displayText = truncateText(fullText, maxChars-2) + "…🔍" // 使用省略号和放大镜图标
+	}
+
+	label := widget.NewLabelWithStyle("  "+displayText, fyne.TextAlignLeading, style)
+	label.Truncation = fyne.TextTruncateEllipsis
+
+	// 创建固定宽度容器 - 使用 Max 容器限制最大宽度
+	spacer := canvas.NewRectangle(color.Transparent)
+	spacer.SetMinSize(fyne.NewSize(width, 1))
+
+	// 创建一个固定大小的容器来确保不会被撑大
+	fixedContainer := container.NewMax(spacer, label)
+
+	// 如果文本被截断，添加点击查看功能
+	if isTruncated {
+		// 创建带悬停效果的可点击区域
+		clickableArea := &tappableContainer{
+			content:   fixedContainer,
+			fullText:  fullText,
+			label:     label,
+			baseText:  displayText,
+			isHovered: false,
+		}
+		clickableArea.ExtendBaseWidget(clickableArea)
+		return clickableArea
+	}
+
+	return fixedContainer
+}
+
+// tappableContainer 自定义可点击容器，带悬停效果
+type tappableContainer struct {
+	widget.BaseWidget
+	content   fyne.CanvasObject
+	fullText  string
+	label     *widget.Label
+	baseText  string
+	isHovered bool
+}
+
+func (t *tappableContainer) CreateRenderer() fyne.WidgetRenderer {
+	return &tappableRenderer{
+		container: t,
+		objects:   []fyne.CanvasObject{t.content},
+	}
+}
+
+func (t *tappableContainer) Tapped(*fyne.PointEvent) {
+	dialog.ShowInformation("完整内容", t.fullText, myWindow)
+}
+
+func (t *tappableContainer) MouseIn(*fyne.PointEvent) {
+	t.isHovered = true
+	// 可以在这里添加视觉反馈，比如改变标签颜色
+	t.Refresh()
+}
+
+func (t *tappableContainer) MouseOut() {
+	t.isHovered = false
+	t.Refresh()
+}
+
+func (t *tappableContainer) MouseMoved(*fyne.PointEvent) {
+	// 可选：处理鼠标移动事件
+}
+
+func (t *tappableContainer) Cursor() desktop.Cursor {
+	return desktop.PointerCursor
+}
+
+type tappableRenderer struct {
+	container *tappableContainer
+	objects   []fyne.CanvasObject
+}
+
+func (r *tappableRenderer) Layout(size fyne.Size) {
+	r.objects[0].Resize(size)
+}
+
+func (r *tappableRenderer) MinSize() fyne.Size {
+	return r.objects[0].MinSize()
+}
+
+func (r *tappableRenderer) Refresh() {
+	r.objects[0].Refresh()
+}
+
+func (r *tappableRenderer) Objects() []fyne.CanvasObject {
+	return r.objects
+}
+
+func (r *tappableRenderer) Destroy() {}
+
 func showVaultScreen() {
 	// 调整窗口大小
 	myWindow.Resize(fyne.NewSize(800, 600))
@@ -596,26 +706,20 @@ func showVaultScreen() {
 				col2Width := float32(160) // 账号列
 				col3Width := float32(320) // 密码列（加宽）
 
-				// 第一列：网站，使用透明占位符控制宽度
-				col1Spacer := canvas.NewRectangle(color.Transparent)
-				col1Spacer.SetMinSize(fyne.NewSize(col1Width, 1))
-				siteLabel := widget.NewLabelWithStyle("  "+item.Site, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-				siteBox := container.NewStack(col1Spacer, siteLabel)
+				// 第一列：网站 - 固定宽度，超长文本可点击查看
+				siteCell := createFixedWidthTextCell(item.Site, 8, col1Width, fyne.TextStyle{Bold: true})
 
-				// 第二列：账号
-				col2Spacer := canvas.NewRectangle(color.Transparent)
-				col2Spacer.SetMinSize(fyne.NewSize(col2Width, 1))
-				usernameLabel := widget.NewLabelWithStyle("  "+item.Username, fyne.TextAlignLeading, fyne.TextStyle{})
-				usernameBox := container.NewStack(col2Spacer, usernameLabel)
+				// 第二列：账号 - 固定宽度，超长文本可点击查看
+				usernameCell := createFixedWidthTextCell(item.Username, 12, col2Width, fyne.TextStyle{})
 
-				// 第三列：密码
+				// 第三列：密码 - 固定宽度容器
 				col3Spacer := canvas.NewRectangle(color.Transparent)
 				col3Spacer.SetMinSize(fyne.NewSize(col3Width, 1))
 				passBox := container.NewStack(col3Spacer, passColumn)
 
 				cardContent := container.NewHBox(
-					siteBox,
-					usernameBox,
+					siteCell,
+					usernameCell,
 					passBox,
 					actionButtons,
 				)
