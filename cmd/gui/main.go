@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -101,12 +102,16 @@ func checkEnvAndInit() {
 func showMainMenu() {
 	// 标题区域
 	titleLabel := widget.NewLabelWithStyle("🔐 Key-Box", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-	subtitleLabel := widget.NewLabelWithStyle("安全本地密码管理器", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+	//subtitleLabel := widget.NewLabelWithStyle("安全本地密码管理器", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+	url, _ := url.Parse("https://github.com/zaneway/key-box")
+	githubLink := widget.NewHyperlink("🌟 访问全球最大的同性交友网站（项目主页）", url)
 
 	titleContainer := container.NewVBox(
 		layout.NewSpacer(),
 		titleLabel,
-		subtitleLabel,
+		//subtitleLabel,
+		githubLink,
 		layout.NewSpacer(),
 	)
 
@@ -138,7 +143,8 @@ func createLoginContent() fyne.CanvasObject {
 	entryOTP.PlaceHolder = "🔢 6位 OTP 验证码"
 	entryOTP.Resize(fyne.NewSize(250, 40))
 
-	btnLogin := widget.NewButton("登录", func() {
+	// 登录处理函数
+	performLogin := func() {
 		user := entryUser.Text
 		otp := entryOTP.Text
 
@@ -169,7 +175,14 @@ func createLoginContent() fyne.CanvasObject {
 		} else {
 			showVaultScreen()
 		}
-	})
+	}
+
+	// 验证码输入框回车事件 - 触发登录
+	entryOTP.OnSubmitted = func(string) {
+		performLogin()
+	}
+
+	btnLogin := widget.NewButton("登录", performLogin)
 	btnLogin.Importance = widget.HighImportance
 
 	btnRegister := widget.NewButtonWithIcon("注册", theme.InfoIcon(), func() {
@@ -664,7 +677,7 @@ func showVaultScreen() {
 				})
 
 				// 给密码框添加深色背景和固定宽度
-				passBg := canvas.NewRectangle(color.RGBA{R: 60, G: 60, B: 60, A: 255})
+				passBg := canvas.NewRectangle(color.RGBA{R: 35, G: 35, B: 35, A: 255})
 				passBg.CornerRadius = 4
 
 				// 使用透明占位符控制密码框最小宽度
