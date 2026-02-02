@@ -12,12 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/corvus-ch/shamir"
 	"golang.org/x/crypto/hkdf"
+
+	"key-box/internal/config"
 )
 
 // FixedKeyQ is the hardcoded key q.
@@ -151,22 +152,27 @@ func DeriveKeyB(masterKeyM []byte, username string) ([]byte, error) {
 	return keyB, nil
 }
 
-// GetRootKey 计算 RootKey = Hash(Env) XOR FixedKeyQ。
+// GetRootKey 计算 RootKey = Hash(Salt) XOR FixedKeyQ。
 // 安全决策:
 // 1. RootKey 用于加密保护存储在数据库中的 Key B。
 // 2. 它不直接存储在磁盘上，而是运行时计算。
 // 3. 依赖 "双因素" 因子:
-//   - 因子1 (p): 环境变量 SEC_APP_SALT (用户需保密)
+//   - 因子1 (p): Salt 值 (支持从配置文件 ~/.key-box.config 或环境变量 SEC_APP_SALT 读取)
 //   - 因子2 (q): 硬编码常量 (编译在二进制中)
-//   - 即使数据库泄露，没有环境变量也无法解密 Key B。
+//   - 即使数据库泄露，没有 Salt 也无法解密 Key B。
+//
+// 4. 读取顺序: 优先从配置文件读取，如果不存在或为空则从环境变量读取
 func GetRootKey() ([]byte, error) {
-	envVal := os.Getenv("SEC_APP_SALT")
-	if envVal == "" {
-		return nil, errors.New("environment variable SEC_APP_SALT is not set")
+	saltVal, err := config.GetSalt()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get salt: %w", err)
+	}
+	if saltVal == "" {
+		return nil, errors.New("salt is not set (check ~/.key-box.config file or SEC_APP_SALT environment variable)")
 	}
 
-	// 计算 p = SHA256(Env)
-	h := sha256.Sum256([]byte(envVal))
+	// 计算 p = SHA256(Salt)
+	h := sha256.Sum256([]byte(saltVal))
 	p := h[:]
 
 	// 计算 q = SHA256(FixedKeyQ)
