@@ -6,16 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"image/color"
 
 	"key-box/internal/auth"
 	"key-box/internal/config"
@@ -39,7 +42,8 @@ var (
 
 func main() {
 	myApp = app.New()
-	myWindow = myApp.NewWindow("本地密码管理器 (Key-Box)")
+	myApp.SetIcon(theme.InfoIcon())
+	myWindow = myApp.NewWindow("Key-Box - 密码管理器")
 	myWindow.Resize(fyne.NewSize(600, 500))
 
 	// 1. Init Config & DB
@@ -94,20 +98,44 @@ func checkEnvAndInit() {
 }
 
 func showMainMenu() {
-	labelTitle := widget.NewLabelWithStyle("欢迎使用 Key-Box", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	// 标题区域
+	titleLabel := widget.NewLabelWithStyle("🔐 Key-Box", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	subtitleLabel := widget.NewLabelWithStyle("安全本地密码管理器", fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+	titleContainer := container.NewVBox(
+		layout.NewSpacer(),
+		titleLabel,
+		subtitleLabel,
+		layout.NewSpacer(),
+	)
 
 	// Login is the main content
 	loginContent := createLoginContent()
 
-	myWindow.SetContent(container.NewBorder(labelTitle, nil, nil, nil, loginContent))
+	// 主布局：上方标题，下方居中登录表单
+	mainContent := container.NewBorder(
+		titleContainer, // top
+		nil,            // bottom
+		nil,            // left
+		nil,            // right
+		container.NewVBox(
+			layout.NewSpacer(),
+			loginContent,
+			layout.NewSpacer(),
+		),
+	)
+
+	myWindow.SetContent(mainContent)
 }
 
 func createLoginContent() fyne.CanvasObject {
 	entryUser := widget.NewEntry()
-	entryUser.PlaceHolder = "用户名"
+	entryUser.PlaceHolder = "👤 用户名"
+	entryUser.Resize(fyne.NewSize(250, 40))
 
 	entryOTP := widget.NewEntry()
-	entryOTP.PlaceHolder = "6位 OTP 验证码"
+	entryOTP.PlaceHolder = "🔢 6位 OTP 验证码"
+	entryOTP.Resize(fyne.NewSize(250, 40))
 
 	btnLogin := widget.NewButton("登录", func() {
 		user := entryUser.Text
@@ -143,28 +171,34 @@ func createLoginContent() fyne.CanvasObject {
 	})
 	btnLogin.Importance = widget.HighImportance
 
-	btnRegister := widget.NewButton("注册新账号", func() {
+	btnRegister := widget.NewButtonWithIcon("注册", theme.InfoIcon(), func() {
 		showRegisterDialog()
 	})
 
-	btnRestore := widget.NewButton("恢复数据", func() {
+	btnRestore := widget.NewButtonWithIcon("恢复", theme.DownloadIcon(), func() {
 		showRestoreDialogBeforeLogin()
 	})
 
-	btnForgot := widget.NewButton("忘记密码/重置", func() {
+	btnForgot := widget.NewButtonWithIcon("重置", theme.MailSendIcon(), func() {
 		showResetDialog()
 	})
 
-	return container.NewVBox(
-		layout.NewSpacer(),
-		widget.NewLabel("请输入您的账户信息:"),
+	// 使用 Grid 让输入框更宽
+	form := container.NewVBox(
+		widget.NewLabelWithStyle("账户登录", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewSeparator(),
 		entryUser,
 		entryOTP,
 		btnLogin,
 		widget.NewSeparator(),
 		container.NewHBox(layout.NewSpacer(), btnRegister, btnRestore, btnForgot, layout.NewSpacer()),
-		layout.NewSpacer(),
 	)
+
+	// 设置最小宽度，让表单更宽更居中
+	formContainer := container.NewPadded(form)
+	formContainer.Resize(fyne.NewSize(350, 300))
+
+	return formContainer
 }
 
 func showRegisterDialog() {
@@ -377,20 +411,32 @@ func showResetDialog() {
 }
 
 func showVaultScreen() {
+	// 调整窗口大小
+	myWindow.Resize(fyne.NewSize(800, 600))
+
 	// Vault Toolbar
-	btnAdd := widget.NewButtonWithIcon("添加密码", theme.ContentAddIcon(), func() {
+	btnAdd := widget.NewButtonWithIcon("添加", theme.ContentAddIcon(), func() {
 		showAddVaultItemDialog()
 	})
 
-	btnBackup := widget.NewButtonWithIcon("备份数据", theme.DocumentSaveIcon(), func() {
+	btnBackup := widget.NewButtonWithIcon("备份", theme.DocumentSaveIcon(), func() {
 		showBackupDialog()
 	})
 
-	btnLogout := widget.NewButtonWithIcon("退出登录", theme.LogoutIcon(), func() {
+	btnRestore := widget.NewButtonWithIcon("恢复", theme.DownloadIcon(), func() {
+		showRestoreDialog()
+	})
+
+	btnLogout := widget.NewButtonWithIcon("退出", theme.LogoutIcon(), func() {
 		currentUser = ""
 		currentKeyC = nil
+		myWindow.Resize(fyne.NewSize(600, 500))
 		showMainMenu()
 	})
+
+	// 搜索框
+	searchEntry := widget.NewEntry()
+	searchEntry.PlaceHolder = "🔍 搜索网站或账号..."
 
 	// Content List
 	listContainer := container.NewVBox()
@@ -398,79 +444,217 @@ func showVaultScreen() {
 	var refreshList func()
 
 	refreshList = func() {
+		searchText := searchEntry.Text
 		listContainer.Objects = nil
+
+		// 标题区域
+		titleContainer := container.NewBorder(
+			nil, nil, nil, nil,
+			container.NewVBox(
+				widget.NewLabelWithStyle("🔐 密码库", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				widget.NewLabel(fmt.Sprintf("当前用户: %s", currentUser)),
+			),
+		)
+		listContainer.Add(titleContainer)
+		listContainer.Add(widget.NewSeparator())
+
 		items, err := vaultManager.ListItems(currentUser, currentKeyC)
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("读取失败: %v", err), myWindow)
 			return
 		}
 
-		// Header
-		listContainer.Add(container.NewGridWithColumns(5,
-			widget.NewLabelWithStyle("网站", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			widget.NewLabelWithStyle("账号", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			widget.NewLabelWithStyle("密码", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			widget.NewLabelWithStyle("操作", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			widget.NewLabel(""), // 额外的操作列
-		))
-		listContainer.Add(widget.NewSeparator())
+		// 过滤搜索结果
+		var filteredItems []vault.VaultItem
+		if searchText == "" {
+			filteredItems = items
+		} else {
+			searchLower := strings.ToLower(searchText)
+			for _, item := range items {
+				if strings.Contains(strings.ToLower(item.Site), searchLower) ||
+					strings.Contains(strings.ToLower(item.Username), searchLower) {
+					filteredItems = append(filteredItems, item)
+				}
+			}
+		}
 
-		for _, item := range items {
-			item := item // Capture for closure
-
-			// 密码脱敏显示
-			passLabel := widget.NewLabel("********")
-
-			// 复制按钮
-			btnCopy := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
-				myWindow.Clipboard().SetContent(item.Password)
-				dialog.ShowInformation("已复制", "密码已复制到剪贴板", myWindow)
-			})
-
-			// 编辑按钮
-			btnEdit := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
-				showEditVaultItemDialog(item, refreshList)
-			})
-
-			// 删除按钮
-			btnDelete := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
-				dialog.ShowCustomConfirm("确认删除", "删除", "取消",
-					widget.NewLabel(fmt.Sprintf("确定要删除 %s 的密码吗？", item.Site)),
-					func(confirm bool) {
-						if confirm {
-							err := vaultManager.DeleteItem(item.ID)
-							if err != nil {
-								dialog.ShowError(fmt.Errorf("删除失败: %v", err), myWindow)
-							} else {
-								dialog.ShowInformation("成功", "密码已删除", myWindow)
-								refreshList()
-							}
-						}
-					}, myWindow)
-			})
-
-			listContainer.Add(container.NewGridWithColumns(5,
-				widget.NewLabel(item.Site),
-				widget.NewLabel(item.Username),
-				passLabel,
-				container.NewHBox(btnCopy, btnEdit),
-				btnDelete,
+		// 空状态
+		if len(filteredItems) == 0 {
+			emptyText := "暂无密码记录"
+			if searchText != "" {
+				emptyText = "未找到匹配的密码记录"
+			}
+			listContainer.Add(container.NewCenter(
+				container.NewVBox(
+					widget.NewLabelWithStyle(emptyText, fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
+					widget.NewLabelWithStyle("点击「添加」按钮开始使用", fyne.TextAlignCenter, fyne.TextStyle{Italic: true}),
+				),
 			))
+		} else {
+			// 添加表头 - 使用透明占位符控制列宽
+			headerBg := canvas.NewRectangle(color.RGBA{R: 200, G: 200, B: 200, A: 255})
+
+			// 定义列宽
+			col1Width := float32(100) // 网站列（调小）
+			col2Width := float32(160) // 账号列
+			col3Width := float32(320) // 密码列（加宽）
+
+			// 创建各列标题，使用透明背景矩形控制宽度
+			col1Spacer := canvas.NewRectangle(color.Transparent)
+			col1Spacer.SetMinSize(fyne.NewSize(col1Width, 1))
+			col1Label := widget.NewLabelWithStyle("  网站", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			col1Box := container.NewStack(col1Spacer, col1Label)
+
+			col2Spacer := canvas.NewRectangle(color.Transparent)
+			col2Spacer.SetMinSize(fyne.NewSize(col2Width, 1))
+			col2Label := widget.NewLabelWithStyle("  账号", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			col2Box := container.NewStack(col2Spacer, col2Label)
+
+			col3Spacer := canvas.NewRectangle(color.Transparent)
+			col3Spacer.SetMinSize(fyne.NewSize(col3Width, 1))
+			col3Label := widget.NewLabelWithStyle("  密码", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			col3Box := container.NewStack(col3Spacer, col3Label)
+
+			col4Label := widget.NewLabelWithStyle("  操作", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+			headerContent := container.NewStack(
+				headerBg,
+				container.NewHBox(
+					col1Box,
+					col2Box,
+					col3Box,
+					col4Label,
+				),
+			)
+			listContainer.Add(headerContent)
+			listContainer.Add(widget.NewSeparator())
+
+			// 密码卡片列表
+			for _, item := range filteredItems {
+				item := item // Capture for closure
+
+				// 密码显示/隐藏状态
+				passwordVisible := false
+				passEntry := widget.NewPasswordEntry()
+				passEntry.SetText(item.Password)
+				passEntry.Disable()
+
+				// 密码显示切换按钮
+				var btnTogglePass *widget.Button
+				btnTogglePass = widget.NewButtonWithIcon("", theme.VisibilityIcon(), func() {
+					if passwordVisible {
+						passEntry.Password = true
+						btnTogglePass.SetIcon(theme.VisibilityIcon())
+					} else {
+						passEntry.Password = false
+						btnTogglePass.SetIcon(theme.VisibilityOffIcon())
+					}
+					passwordVisible = !passwordVisible
+					passEntry.Refresh()
+				})
+
+				// 给密码框添加深色背景
+				passBg := canvas.NewRectangle(color.RGBA{R: 60, G: 60, B: 60, A: 255})
+				passBg.CornerRadius = 4
+				passWithBg := container.NewStack(passBg, passEntry)
+
+				// 密码框和切换按钮组合
+				passColumn := container.NewHBox(
+					widget.NewLabel("  "), // 与表头对齐
+					passWithBg,
+					btnTogglePass,
+				)
+
+				// 操作按钮组 - 单独放在一个 HBox 中
+				actionButtons := container.NewHBox(
+					widget.NewButtonWithIcon("复制", theme.ContentCopyIcon(), func() {
+						myWindow.Clipboard().SetContent(item.Password)
+						dialog.ShowInformation("已复制", "密码已复制到剪贴板", myWindow)
+					}),
+					widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
+						showEditVaultItemDialog(item, refreshList)
+					}),
+					widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+						dialog.ShowCustomConfirm("确认删除", "删除", "取消",
+							widget.NewLabel(fmt.Sprintf("确定要删除「%s」的密码吗？", item.Site)),
+							func(confirm bool) {
+								if confirm {
+									err := vaultManager.DeleteItem(item.ID)
+									if err != nil {
+										dialog.ShowError(fmt.Errorf("删除失败: %v", err), myWindow)
+									} else {
+										dialog.ShowInformation("成功", "密码已删除", myWindow)
+										refreshList()
+									}
+								}
+							}, myWindow)
+					}),
+				)
+
+				// 使用与表头完全相同的列宽和方法
+				col1Width := float32(100) // 网站列（调小）
+				col2Width := float32(160) // 账号列
+				col3Width := float32(320) // 密码列（加宽）
+
+				// 第一列：网站，使用透明占位符控制宽度
+				col1Spacer := canvas.NewRectangle(color.Transparent)
+				col1Spacer.SetMinSize(fyne.NewSize(col1Width, 1))
+				siteLabel := widget.NewLabelWithStyle("  "+item.Site, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+				siteBox := container.NewStack(col1Spacer, siteLabel)
+
+				// 第二列：账号
+				col2Spacer := canvas.NewRectangle(color.Transparent)
+				col2Spacer.SetMinSize(fyne.NewSize(col2Width, 1))
+				usernameLabel := widget.NewLabelWithStyle("  "+item.Username, fyne.TextAlignLeading, fyne.TextStyle{})
+				usernameBox := container.NewStack(col2Spacer, usernameLabel)
+
+				// 第三列：密码
+				col3Spacer := canvas.NewRectangle(color.Transparent)
+				col3Spacer.SetMinSize(fyne.NewSize(col3Width, 1))
+				passBox := container.NewStack(col3Spacer, passColumn)
+
+				cardContent := container.NewHBox(
+					siteBox,
+					usernameBox,
+					passBox,
+					actionButtons,
+				)
+
+				// 添加卡片
+				listContainer.Add(cardContent)
+				listContainer.Add(widget.NewSeparator())
+			}
 		}
 		listContainer.Refresh()
+	}
+
+	// 搜索框实时搜索
+	searchEntry.OnChanged = func(string) {
+		refreshList()
 	}
 
 	// Initial Load
 	refreshList()
 
-	// Layout
-	content := container.NewBorder(
+	// 顶部工具栏
+	toolbar := container.NewBorder(
+		nil, nil, nil, nil,
 		container.NewHBox(
-			widget.NewLabel("当前用户: "+currentUser),
-			layout.NewSpacer(),
-			btnBackup,
 			btnAdd,
+			btnBackup,
+			btnRestore,
+			layout.NewSpacer(),
 			btnLogout,
+		),
+	)
+
+	// 主布局
+	content := container.NewBorder(
+		container.NewVBox(
+			toolbar,
+			widget.NewSeparator(),
+			searchEntry,
+			widget.NewSeparator(),
 		),
 		nil, nil, nil,
 		container.NewVScroll(listContainer),
