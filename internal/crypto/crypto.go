@@ -217,7 +217,7 @@ func GenerateTOTP(secretKeyB []byte, t time.Time) string {
 	return fmt.Sprintf("%06d", otp)
 }
 
-// VerifyOTP verifies the input code against current time and current time - 30s.
+// VerifyOTP verifies the input code against current time and current time - 30s and current time + 30s.
 func VerifyOTP(secretKeyB []byte, inputCode string) bool {
 	now := time.Now()
 	if GenerateTOTP(secretKeyB, now) == inputCode {
@@ -225,6 +225,10 @@ func VerifyOTP(secretKeyB []byte, inputCode string) bool {
 	}
 	// Check previous window (30s ago)
 	if GenerateTOTP(secretKeyB, now.Add(-30*time.Second)) == inputCode {
+		return true
+	}
+	//match +T
+	if GenerateTOTP(secretKeyB, now.Add(+30*time.Second)) == inputCode {
 		return true
 	}
 	return false
