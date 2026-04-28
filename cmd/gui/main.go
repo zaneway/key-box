@@ -965,9 +965,23 @@ func performBackup() {
 			return
 		}
 
-		dialog.ShowInformation("备份成功",
-			fmt.Sprintf("已导出账户和 %d 条密码记录！\n\n✅ 密码已加密，可用于账户迁移和恢复", len(dbItems)),
-			myWindow)
+		// 获取当前SEC_APP_SALT用于提示
+		currentSalt, _ := config.GetSalt()
+		
+		backupMsg := fmt.Sprintf("已导出账户和 %d 条密码记录！\n\n", len(dbItems))
+		if currentSalt != "" {
+			backupMsg += "✅ 密码已加密，可用于账户迁移和恢复\n\n"
+			backupMsg += "⚠️ 重要：跨设备恢复前请确保新设备配置相同的 SEC_APP_SALT\n"
+			backupMsg += fmt.Sprintf("当前值: %s\n\n", currentSalt)
+			backupMsg += "恢复步骤：\n"
+			backupMsg += "1. 将 ~/.key-box.config 文件复制到新设备\n"
+			backupMsg += fmt.Sprintf("2. 或设置环境变量: export SEC_APP_SALT=%s", currentSalt)
+		} else {
+			backupMsg += "✅ 密码已加密，可用于账户迁移和恢复\n\n"
+			backupMsg += "ℹ️ 注意：SEC_APP_SALT 未配置，跨设备恢复时需手动配置"
+		}
+		
+		dialog.ShowInformation("备份成功", backupMsg, myWindow)
 	}, myWindow)
 
 	// 设置默认文件名
@@ -977,6 +991,24 @@ func performBackup() {
 
 // showRestoreDialogBeforeLogin 登录前显示恢复对话框
 func showRestoreDialogBeforeLogin() {
+	currentSalt, _ := config.GetSalt()
+	
+	var saltInfo *fyne.Container
+	if currentSalt == "" {
+		saltInfo = container.NewVBox(
+			widget.NewLabel("⚠️ SEC_APP_SALT 未配置"),
+			widget.NewLabel("跨设备恢复前必须配置 SEC_APP_SALT"),
+			widget.NewLabel("配置方法："),
+			widget.NewLabel("1. 复制原设备的 ~/.key-box.config 到本设备"),
+			widget.NewLabel("2. 或设置环境变量: export SEC_APP_SALT=<原值>"),
+		)
+	} else {
+		saltInfo = container.NewVBox(
+			widget.NewLabel("✅ SEC_APP_SALT 已配置"),
+			widget.NewLabel("（跨设备恢复需与原设备一致）"),
+		)
+	}
+	
 	content := container.NewVBox(
 		widget.NewLabel("📥 恢复数据说明"),
 		widget.NewSeparator(),
@@ -984,6 +1016,8 @@ func showRestoreDialogBeforeLogin() {
 		widget.NewLabel("• 备份文件包含用户信息和加密的密码"),
 		widget.NewLabel("• 将创建或覆盖同名账户"),
 		widget.NewLabel("• 恢复后可直接使用原 TOTP 登录"),
+		widget.NewSeparator(),
+		saltInfo,
 		widget.NewSeparator(),
 		widget.NewLabel("⚠️ 如果账户已存在，数据将被覆盖！"),
 	)
@@ -1072,6 +1106,20 @@ func mustDecodeHex(s string) []byte {
 
 // continueRestore 继续恢复流程
 func continueRestore(user *db.User, items []BackupItemEncrypted) {
+	// 检查SEC_APP_SALT是否已配置（用于解密Key B）
+	currentSalt, err := config.GetSalt()
+	if err != nil || currentSalt == "" {
+		dialog.ShowError(fmt.Errorf(
+			"恢复失败：SEC_APP_SALT 未配置\n\n"+
+				"跨设备恢复需要在新设备配置相同的 SEC_APP_SALT\n\n"+
+				"配置方法：\n"+
+				"1. 将原设备的 ~/.key-box.config 文件复制到新设备\n"+
+				"2. 或设置环境变量: export SEC_APP_SALT=<原值>\n\n"+
+				"提示：备份成功时会显示当前的 SEC_APP_SALT 值"),
+			myWindow)
+		return
+	}
+
 	// 创建用户
 	if err := authService.RestoreUser(user); err != nil {
 		dialog.ShowError(fmt.Errorf("恢复用户失败: %v", err), myWindow)
@@ -1092,15 +1140,21 @@ func continueRestore(user *db.User, items []BackupItemEncrypted) {
 	}
 
 	// 显示结果
-	if failCount > 0 {
-		dialog.ShowInformation("恢复完成",
-			fmt.Sprintf("账户: %s\n成功导入: %d 条\n失败: %d 条\n\n请使用原 TOTP 登录", user.Username, successCount, failCount),
-			myWindow)
+	var restoreResult string
+	if currentSalt == "" {
+		if failCount > 0 {
+			restoreResult = fmt.Sprintf("账户: %s\n成功导入: %d 条\n失败: %d 条\n\n⚠️ 重要：SEC_APP_SALT 未配置！\n\n配置步骤：\n1. 复制 ~/.key-box.config 到新设备\n2. 或设置环境变量:\n   export SEC_APP_SALT=<备份时显示的值>\n\n配置完成后再尝试登录", user.Username, successCount, failCount)
+		} else {
+			restoreResult = fmt.Sprintf("账户 '%s' 恢复成功！\n成功导入 %d 条密码记录\n\n⚠️ 重要：SEC_APP_SALT 未配置！\n\n配置步骤：\n1. 复制 ~/.key-box.config 到新设备\n2. 或设置环境变量:\n   export SEC_APP_SALT=<备份时显示的值>\n\n配置完成后再尝试登录", user.Username, successCount)
+		}
 	} else {
-		dialog.ShowInformation("恢复成功",
-			fmt.Sprintf("账户 '%s' 恢复成功！\n成功导入 %d 条密码记录\n\n请使用原 TOTP 登录", user.Username, successCount),
-			myWindow)
+		if failCount > 0 {
+			restoreResult = fmt.Sprintf("账户: %s\n成功导入: %d 条\n失败: %d 条\n\n请使用原 TOTP 登录", user.Username, successCount, failCount)
+		} else {
+			restoreResult = fmt.Sprintf("账户 '%s' 恢复成功！\n成功导入 %d 条密码记录\n\n请使用原 TOTP 登录", user.Username, successCount)
+		}
 	}
+	dialog.ShowInformation("恢复结果", restoreResult, myWindow)
 }
 
 // showRestoreDialog 显示恢复对话框（登录后）

@@ -100,10 +100,10 @@ case "$BUILD_ARCH" in
         GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 \
         fyne package \
             --target darwin \
-            --source-dir cmd/gui \
+            --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --app-id "$APP_ID" \
+            --appID "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
 
@@ -115,10 +115,10 @@ case "$BUILD_ARCH" in
         GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 \
         fyne package \
             --target darwin \
-            --source-dir cmd/gui \
+            --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --app-id "$APP_ID" \
+            --appID "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
 
@@ -151,10 +151,10 @@ case "$BUILD_ARCH" in
         GOOS=darwin GOARCH="$BUILD_ARCH" CGO_ENABLED=1 \
         fyne package \
             --target darwin \
-            --source-dir cmd/gui \
+            --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --app-id "$APP_ID" \
+            --appID "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
         ;;
