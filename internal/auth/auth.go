@@ -12,6 +12,8 @@ type Service struct {
 	db *db.DB
 }
 
+var ErrSystemKeyMismatch = errors.New("system key mismatch")
+
 func NewService(db *db.DB) *Service {
 	return &Service{db: db}
 }
@@ -141,17 +143,29 @@ func (s *Service) Login(username, code string) ([]byte, error) {
 		return nil, errors.New("user not found")
 	}
 
-	// 1. 获取 Root Key
-	rootKey, err := crypto.GetRootKey()
+	// 1. 获取 Root Key 候选。第一个是当前版本，后续是历史版本，用于兼容旧包生成的数据。
+	rootKeys, err := crypto.GetRootKeyCandidates()
 	if err != nil {
 		return nil, err
 	}
 
 	// 2. 解密 Key B
 	// 如果环境变量配置错误，RootKey 会变，解密 B 将失败 (GCM Auth Tag 校验失败)。
-	keyB, err := crypto.DecryptAESGCM(rootKey, u.EncB)
-	if err != nil {
-		return nil, errors.New("failed to decrypt system key (root key mismatch?)")
+	var (
+		keyB              []byte
+		rootKeyVersion    string
+		usedLegacyRootKey bool
+	)
+	for i, candidate := range rootKeys {
+		keyB, err = crypto.DecryptAESGCM(candidate.Key, u.EncB)
+		if err == nil {
+			rootKeyVersion = candidate.Version
+			usedLegacyRootKey = i > 0
+			break
+		}
+	}
+	if keyB == nil {
+		return nil, fmt.Errorf("failed to decrypt system key (root key mismatch?): %w", ErrSystemKeyMismatch)
 	}
 
 	// 3. 验证 TOTP
@@ -167,7 +181,24 @@ func (s *Service) Login(username, code string) ([]byte, error) {
 		return nil, errors.New("failed to unlock vault (key C decryption failed)")
 	}
 
+	if usedLegacyRootKey {
+		// 兼容迁移：旧版本固定因子可以解密时，登录成功后把 EncB 迁移到当前 RootKey。
+		_ = s.updateEncryptedSystemKey(username, keyB, rootKeys[0].Key, rootKeyVersion)
+	}
+
 	return keyC, nil
+}
+
+func (s *Service) updateEncryptedSystemKey(username string, keyB, currentRootKey []byte, previousVersion string) error {
+	encB, err := crypto.EncryptAESGCM(currentRootKey, keyB)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE users SET enc_b = ? WHERE username = ?`, encB, username)
+	if err != nil {
+		return fmt.Errorf("migrate system key from %s: %w", previousVersion, err)
+	}
+	return nil
 }
 
 // ResetPassword 密码重置/密钥轮转流程。

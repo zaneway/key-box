@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -64,23 +65,36 @@ func checkEnvAndInit() {
 		dialog.ShowError(fmt.Errorf("读取配置失败: %v", err), myWindow)
 		return
 	}
-	if salt == "" {
-		b := make([]byte, 16)
-		if _, err := rand.Read(b); err != nil {
-			dialog.ShowError(fmt.Errorf("随机数生成失败: %v", err), myWindow)
-			return
-		}
-		autoSalt = hex.EncodeToString(b)
-		if err := config.SaveSalt(autoSalt); err != nil {
-			dialog.ShowError(fmt.Errorf("保存配置失败: %v", err), myWindow)
-			return
-		}
-	}
 
 	database, err := db.InitDB()
 	if err != nil {
 		dialog.ShowError(fmt.Errorf("数据库初始化失败: %v", err), myWindow)
 		return
+	}
+
+	if salt == "" {
+		userCount, err := database.UserCount()
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("检查账户数据失败: %v", err), myWindow)
+			return
+		}
+
+		if userCount > 0 {
+			fyne.CurrentApp().Lifecycle().SetOnStarted(func() {
+				showMissingSaltForExistingUsersDialog()
+			})
+		} else {
+			b := make([]byte, 16)
+			if _, err := rand.Read(b); err != nil {
+				dialog.ShowError(fmt.Errorf("随机数生成失败: %v", err), myWindow)
+				return
+			}
+			autoSalt = hex.EncodeToString(b)
+			if err := config.SaveSalt(autoSalt); err != nil {
+				dialog.ShowError(fmt.Errorf("保存配置失败: %v", err), myWindow)
+				return
+			}
+		}
 	}
 
 	authService = auth.NewService(database)
@@ -97,6 +111,117 @@ func checkEnvAndInit() {
 			dialog.ShowCustom("初始化完成", "我知道了", content, myWindow)
 		})
 	}
+}
+
+func showMissingSaltForExistingUsersDialog() {
+	content := container.NewVBox(
+		widget.NewLabel("检测到本机已有 Key-Box 账户数据，但未找到 SEC_APP_SALT。"),
+		widget.NewLabel("为避免覆盖原密钥，程序没有自动生成新的 Salt。"),
+		widget.NewSeparator(),
+		widget.NewLabel("请配置注册或备份时使用的原 Salt，否则原账号无法解密系统密钥。"),
+	)
+
+	dialog.ShowCustomConfirm("需要配置原 Salt", "配置 Salt", "稍后处理", content, func(ok bool) {
+		if ok {
+			showSaltConfigDialog(nil)
+		}
+	}, myWindow)
+}
+
+func showSaltConfigDialog(onSaved func()) {
+	currentSalt, _ := config.GetSalt()
+	configPath, err := config.ConfigPath()
+	if err != nil {
+		configPath = "~/.key-box.config"
+	}
+
+	entrySalt := widget.NewEntry()
+	entrySalt.SetPlaceHolder("粘贴注册或备份时使用的 SEC_APP_SALT")
+	entrySalt.SetText(currentSalt)
+
+	content := container.NewVBox(
+		widget.NewLabel("RootKey 由 SEC_APP_SALT 派生，用于解密系统密钥 Key B。"),
+		widget.NewLabel("如果是恢复原账号，必须填写注册或备份时的原 Salt。"),
+		widget.NewSeparator(),
+		widget.NewLabel("配置文件: "+configPath),
+		entrySalt,
+	)
+
+	dialog.ShowCustomConfirm("配置 SEC_APP_SALT", "保存", "取消", content, func(ok bool) {
+		if !ok {
+			return
+		}
+
+		salt := strings.TrimSpace(entrySalt.Text)
+		if salt == "" {
+			dialog.ShowError(fmt.Errorf("SEC_APP_SALT 不能为空"), myWindow)
+			return
+		}
+		saveSaltWithOverwriteConfirm(salt, configPath, onSaved)
+	}, myWindow)
+}
+
+func saveSaltWithOverwriteConfirm(newSalt, configPath string, onSaved func()) {
+	oldSalt, exists, err := config.SavedSalt()
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("读取本地 Salt 失败: %v", err), myWindow)
+		return
+	}
+
+	if exists && oldSalt != "" && oldSalt != newSalt {
+		oldEntry := widget.NewEntry()
+		oldEntry.SetText(oldSalt)
+		newEntry := widget.NewEntry()
+		newEntry.SetText(newSalt)
+
+		content := container.NewVBox(
+			widget.NewLabel("本地已存在 SEC_APP_SALT。"),
+			widget.NewLabel("保存新值会覆盖现有配置。请先备份旧值，避免旧账户无法解密。"),
+			widget.NewSeparator(),
+			widget.NewLabel("当前旧值（可复制备份）:"),
+			oldEntry,
+			widget.NewLabel("即将写入的新值:"),
+			newEntry,
+			widget.NewLabel("配置文件: "+configPath),
+		)
+
+		dialog.ShowCustomConfirm("覆盖 SEC_APP_SALT", "我已备份，覆盖", "取消", content, func(ok bool) {
+			if ok {
+				saveSaltAndNotify(newSalt, configPath, onSaved)
+			}
+		}, myWindow)
+		return
+	}
+
+	saveSaltAndNotify(newSalt, configPath, onSaved)
+}
+
+func saveSaltAndNotify(salt, configPath string, onSaved func()) {
+	if err := config.SaveSalt(salt); err != nil {
+		dialog.ShowError(fmt.Errorf("保存 Salt 失败: %v", err), myWindow)
+		return
+	}
+
+	if onSaved != nil {
+		onSaved()
+		return
+	}
+	dialog.ShowInformation("配置已保存", "已写入: "+configPath+"\n请使用原账号重新登录。", myWindow)
+}
+
+func showSystemKeyMismatchDialog(retry func()) {
+	content := container.NewVBox(
+		widget.NewLabel("系统密钥解密失败，通常表示当前 SEC_APP_SALT 与注册时不一致。"),
+		widget.NewLabel("重新打包或重装不会迁移 Shell 环境变量；双击 macOS App 也不会继承终端里的 export。"),
+		widget.NewSeparator(),
+		widget.NewLabel("请粘贴原 Salt。保存后会立即重试登录。"),
+	)
+
+	dialog.ShowCustomConfirm("RootKey 不匹配", "配置 Salt", "取消", content, func(ok bool) {
+		if ok {
+			showSaltConfigDialog(retry)
+		}
+	}, myWindow)
 }
 
 func showMainMenu() {
@@ -144,7 +269,8 @@ func createLoginContent() fyne.CanvasObject {
 	entryOTP.Resize(fyne.NewSize(250, 40))
 
 	// 登录处理函数
-	performLogin := func() {
+	var performLogin func()
+	performLogin = func() {
 		user := entryUser.Text
 		otp := entryOTP.Text
 
@@ -155,6 +281,10 @@ func createLoginContent() fyne.CanvasObject {
 
 		keyC, err := authService.Login(user, otp)
 		if err != nil {
+			if errors.Is(err, auth.ErrSystemKeyMismatch) {
+				showSystemKeyMismatchDialog(performLogin)
+				return
+			}
 			dialog.ShowError(fmt.Errorf("登录失败: %v", err), myWindow)
 			return
 		}
@@ -197,6 +327,10 @@ func createLoginContent() fyne.CanvasObject {
 		showResetDialog()
 	})
 
+	btnSalt := widget.NewButton("Salt", func() {
+		showSaltConfigDialog(nil)
+	})
+
 	// 使用 Grid 让输入框更宽
 	form := container.NewVBox(
 		widget.NewLabelWithStyle("账户登录", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
@@ -205,7 +339,7 @@ func createLoginContent() fyne.CanvasObject {
 		entryOTP,
 		btnLogin,
 		widget.NewSeparator(),
-		container.NewHBox(layout.NewSpacer(), btnRegister, btnRestore, btnForgot, layout.NewSpacer()),
+		container.NewHBox(layout.NewSpacer(), btnRegister, btnRestore, btnForgot, btnSalt, layout.NewSpacer()),
 	)
 
 	// 设置最小宽度，让表单更宽更居中
@@ -967,21 +1101,7 @@ func performBackup() {
 
 		// 获取当前SEC_APP_SALT用于提示
 		currentSalt, _ := config.GetSalt()
-		
-		backupMsg := fmt.Sprintf("已导出账户和 %d 条密码记录！\n\n", len(dbItems))
-		if currentSalt != "" {
-			backupMsg += "✅ 密码已加密，可用于账户迁移和恢复\n\n"
-			backupMsg += "⚠️ 重要：跨设备恢复前请确保新设备配置相同的 SEC_APP_SALT\n"
-			backupMsg += fmt.Sprintf("当前值: %s\n\n", currentSalt)
-			backupMsg += "恢复步骤：\n"
-			backupMsg += "1. 将 ~/.key-box.config 文件复制到新设备\n"
-			backupMsg += fmt.Sprintf("2. 或设置环境变量: export SEC_APP_SALT=%s", currentSalt)
-		} else {
-			backupMsg += "✅ 密码已加密，可用于账户迁移和恢复\n\n"
-			backupMsg += "ℹ️ 注意：SEC_APP_SALT 未配置，跨设备恢复时需手动配置"
-		}
-		
-		dialog.ShowInformation("备份成功", backupMsg, myWindow)
+		showBackupSuccessDialog(len(dbItems), currentSalt)
 	}, myWindow)
 
 	// 设置默认文件名
@@ -989,10 +1109,39 @@ func performBackup() {
 	saveDialog.Show()
 }
 
+func showBackupSuccessDialog(itemCount int, currentSalt string) {
+	content := container.NewVBox(
+		widget.NewLabel(fmt.Sprintf("已导出账户和 %d 条密码记录。", itemCount)),
+		widget.NewLabel("密码数据保持加密，可用于账户迁移和灾难恢复。"),
+		widget.NewSeparator(),
+	)
+
+	if currentSalt != "" {
+		saltEntry := widget.NewEntry()
+		saltEntry.SetText(currentSalt)
+		commandEntry := widget.NewEntry()
+		commandEntry.SetText(fmt.Sprintf("printf '%%s' %s > ~/.key-box.config", shellQuote(currentSalt)))
+
+		content.Add(widget.NewLabel("跨设备恢复前，新设备必须配置相同的 SEC_APP_SALT。"))
+		content.Add(widget.NewLabel("当前 SEC_APP_SALT（可选中复制）:"))
+		content.Add(saltEntry)
+		content.Add(widget.NewLabel("推荐写入命令（可选中复制，避免 echo 写入换行）:"))
+		content.Add(commandEntry)
+	} else {
+		content.Add(widget.NewLabel("SEC_APP_SALT 未配置。跨设备恢复前需要手动配置原 Salt。"))
+	}
+
+	dialog.ShowCustom("备份成功", "我知道了", content, myWindow)
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // showRestoreDialogBeforeLogin 登录前显示恢复对话框
 func showRestoreDialogBeforeLogin() {
 	currentSalt, _ := config.GetSalt()
-	
+
 	var saltInfo *fyne.Container
 	if currentSalt == "" {
 		saltInfo = container.NewVBox(
@@ -1008,7 +1157,7 @@ func showRestoreDialogBeforeLogin() {
 			widget.NewLabel("（跨设备恢复需与原设备一致）"),
 		)
 	}
-	
+
 	content := container.NewVBox(
 		widget.NewLabel("📥 恢复数据说明"),
 		widget.NewSeparator(),
@@ -1106,20 +1255,6 @@ func mustDecodeHex(s string) []byte {
 
 // continueRestore 继续恢复流程
 func continueRestore(user *db.User, items []BackupItemEncrypted) {
-	// 检查SEC_APP_SALT是否已配置（用于解密Key B）
-	currentSalt, err := config.GetSalt()
-	if err != nil || currentSalt == "" {
-		dialog.ShowError(fmt.Errorf(
-			"恢复失败：SEC_APP_SALT 未配置\n\n"+
-				"跨设备恢复需要在新设备配置相同的 SEC_APP_SALT\n\n"+
-				"配置方法：\n"+
-				"1. 将原设备的 ~/.key-box.config 文件复制到新设备\n"+
-				"2. 或设置环境变量: export SEC_APP_SALT=<原值>\n\n"+
-				"提示：备份成功时会显示当前的 SEC_APP_SALT 值"),
-			myWindow)
-		return
-	}
-
 	// 创建用户
 	if err := authService.RestoreUser(user); err != nil {
 		dialog.ShowError(fmt.Errorf("恢复用户失败: %v", err), myWindow)
@@ -1140,6 +1275,7 @@ func continueRestore(user *db.User, items []BackupItemEncrypted) {
 	}
 
 	// 显示结果
+	currentSalt, _ := config.GetSalt()
 	var restoreResult string
 	if currentSalt == "" {
 		if failCount > 0 {
@@ -1154,7 +1290,28 @@ func continueRestore(user *db.User, items []BackupItemEncrypted) {
 			restoreResult = fmt.Sprintf("账户 '%s' 恢复成功！\n成功导入 %d 条密码记录\n\n请使用原 TOTP 登录", user.Username, successCount)
 		}
 	}
-	dialog.ShowInformation("恢复结果", restoreResult, myWindow)
+	showRestoreResultDialog(restoreResult, currentSalt)
+}
+
+func showRestoreResultDialog(message, currentSalt string) {
+	content := container.NewVBox(
+		widget.NewLabel(message),
+		widget.NewSeparator(),
+	)
+
+	if currentSalt == "" {
+		content.Add(widget.NewLabel("检测到当前未配置 SEC_APP_SALT。"))
+		content.Add(widget.NewLabel("请设置备份时显示的原 Salt，否则恢复账号无法登录。"))
+	} else {
+		content.Add(widget.NewLabel("当前已配置 SEC_APP_SALT。"))
+		content.Add(widget.NewLabel("如果该值不是备份时的原值，请重新设置。"))
+	}
+
+	dialog.ShowCustomConfirm("恢复结果", "设置/更新 Salt", "稍后处理", content, func(ok bool) {
+		if ok {
+			showSaltConfigDialog(nil)
+		}
+	}, myWindow)
 }
 
 // showRestoreDialog 显示恢复对话框（登录后）

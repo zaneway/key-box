@@ -21,7 +21,24 @@ import (
 	"key-box/internal/config"
 )
 
-var packageData = []byte("this-is-fixed-key-q-for-zaneway-key-box-project-祖国必将统一") // 32+ bytes
+type RootKeyCandidate struct {
+	Version string
+	Key     []byte
+}
+
+var rootKeyMaterials = []struct {
+	version string
+	secret  []byte
+}{
+	{
+		version: "v2",
+		secret:  []byte("this-is-fixed-key-q-for-zaneway-key-box-project-祖国必将统一"),
+	},
+	{
+		version: "v1",
+		secret:  []byte("this-is-fixed-key-q-for-key-box-project-1234567890"),
+	},
+}
 
 // GenerateRandomBytes generates n random bytes.
 func GenerateRandomBytes(n int) ([]byte, error) {
@@ -162,6 +179,14 @@ func DeriveKeyB(masterKeyM []byte, username string) ([]byte, error) {
 //
 // 4. 读取顺序: 优先从配置文件读取，如果不存在或为空则从环境变量读取
 func GetRootKey() ([]byte, error) {
+	candidates, err := GetRootKeyCandidates()
+	if err != nil {
+		return nil, err
+	}
+	return candidates[0].Key, nil
+}
+
+func GetRootKeyCandidates() ([]RootKeyCandidate, error) {
 	saltVal, err := config.GetSalt()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get salt: %w", err)
@@ -170,13 +195,24 @@ func GetRootKey() ([]byte, error) {
 		return nil, errors.New("salt is not set (check ~/.key-box.config file or SEC_APP_SALT environment variable)")
 	}
 
+	candidates := make([]RootKeyCandidate, 0, len(rootKeyMaterials))
+	for _, material := range rootKeyMaterials {
+		candidates = append(candidates, RootKeyCandidate{
+			Version: material.version,
+			Key:     deriveRootKey(saltVal, material.secret),
+		})
+	}
+	return candidates, nil
+}
+
+func deriveRootKey(saltVal string, fixedSecret []byte) []byte {
 	// 计算 p = SHA256(Salt)
 	h := sha256.Sum256([]byte(saltVal))
 	p := h[:]
 
 	// 计算 q = SHA256(FixedKeyQ)
 	// 确保 p 和 q 长度一致 (32字节)，便于异或操作
-	hq := sha256.Sum256(packageData)
+	hq := sha256.Sum256(fixedSecret)
 	q := hq[:]
 
 	// 计算 RootKey = p XOR q
@@ -184,7 +220,7 @@ func GetRootKey() ([]byte, error) {
 	for i := 0; i < 32; i++ {
 		rootKey[i] = p[i] ^ q[i]
 	}
-	return rootKey, nil
+	return rootKey
 }
 
 // GenerateTOTP generates a 6-digit TOTP code based on the secret and time.

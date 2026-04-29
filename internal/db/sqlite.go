@@ -105,6 +105,12 @@ func (db *DB) GetUser(username string) (*User, error) {
 	return u, nil
 }
 
+func (db *DB) UserCount() (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	return count, err
+}
+
 func (db *DB) SaveVaultItem(username, site string, encData []byte) error {
 	stmt := `INSERT INTO vault (username, site, enc_data) VALUES (?, ?, ?)`
 	_, err := db.Exec(stmt, username, site, encData)
