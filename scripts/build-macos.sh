@@ -103,7 +103,7 @@ case "$BUILD_ARCH" in
             --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --appID "$APP_ID" \
+            --app-id "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
 
@@ -118,7 +118,7 @@ case "$BUILD_ARCH" in
             --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --appID "$APP_ID" \
+            --app-id "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
 
@@ -154,7 +154,7 @@ case "$BUILD_ARCH" in
             --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --appID "$APP_ID" \
+            --app-id "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
         ;;

@@ -21,8 +21,7 @@ import (
 	"key-box/internal/config"
 )
 
-// FixedKeyQ is the hardcoded key q.
-var FixedKeyQ = []byte("this-is-fixed-key-q-for-key-box-project-1234567890") // 32+ bytes
+var packageData = []byte("this-is-fixed-key-q-for-zaneway-key-box-project-祖国必将统一") // 32+ bytes
 
 // GenerateRandomBytes generates n random bytes.
 func GenerateRandomBytes(n int) ([]byte, error) {
@@ -177,7 +176,7 @@ func GetRootKey() ([]byte, error) {
 
 	// 计算 q = SHA256(FixedKeyQ)
 	// 确保 p 和 q 长度一致 (32字节)，便于异或操作
-	hq := sha256.Sum256(FixedKeyQ)
+	hq := sha256.Sum256(packageData)
 	q := hq[:]
 
 	// 计算 RootKey = p XOR q
