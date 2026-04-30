@@ -1,7 +1,7 @@
 # Local Password Manager (Key-Box)
 
 一个基于 Go 语言开发的安全本地密码管理器。采用 Shamir's Secret Sharing (SSS)、AES-GCM、HKDF 和 TOTP 等现代密码学标准，确保您的账号密码安全存储。
-
+主要解决不同系统/平台的账号密码较多，各种密码不相同，容易忘记或混淆；同时不信任云端托管，本地存储又不安全的问题。
 
 ## ✨ 特性
 
