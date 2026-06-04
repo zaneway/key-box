@@ -3,6 +3,7 @@ package vault
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"key-box/internal/crypto"
 	"key-box/internal/db"
@@ -21,11 +22,31 @@ type ItemData struct {
 	Password string `json:"password"`
 }
 
-type VaultItem struct {
-	ID       int
+type ItemInput struct {
+	Title    string
 	Site     string
+	URL      string
+	Category string
 	Username string
 	Password string
+	Favorite bool
+}
+
+type ItemFilter struct {
+	Search   string
+	Category string
+}
+
+type VaultItem struct {
+	ID        int
+	Title     string
+	Site      string
+	URL       string
+	Category  string
+	Username  string
+	Password  string
+	Favorite  bool
+	UpdatedAt string
 }
 
 // AddItem 加密并存储一个新的密码条目。
@@ -35,9 +56,20 @@ type VaultItem struct {
 //     注意: Key C 是数据专用密钥，只有在用户登录并通过 TOTP 验证后才能获取。
 //  3. 将加密后的 Blob 和明文索引 (Site) 存储到数据库。
 func (m *Manager) AddItem(username string, keyC []byte, site, itemUser, itemPass string) error {
-	data := ItemData{
+	return m.AddDetailedItem(username, keyC, ItemInput{
+		Title:    site,
+		Site:     site,
+		Category: "未分类",
 		Username: itemUser,
 		Password: itemPass,
+	})
+}
+
+func (m *Manager) AddDetailedItem(username string, keyC []byte, input ItemInput) error {
+	input = normalizeInput(input)
+	data := ItemData{
+		Username: input.Username,
+		Password: input.Password,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -50,7 +82,7 @@ func (m *Manager) AddItem(username string, keyC []byte, site, itemUser, itemPass
 		return err
 	}
 
-	return m.db.SaveVaultItem(username, site, encData)
+	return m.db.SaveVaultItemWithMeta(username, input.Title, input.Site, input.URL, input.Category, input.Favorite, encData)
 }
 
 // ListItems 读取并解密所有密码条目。
@@ -60,13 +92,26 @@ func (m *Manager) AddItem(username string, keyC []byte, site, itemUser, itemPass
 // 3. 如果解密失败 (例如数据损坏或密钥错误)，返回错误。
 // 4. 反序列化 JSON 得到明文。
 func (m *Manager) ListItems(username string, keyC []byte) ([]VaultItem, error) {
+	return m.ListItemsFiltered(username, keyC, ItemFilter{})
+}
+
+func (m *Manager) ListItemsFiltered(username string, keyC []byte, filter ItemFilter) ([]VaultItem, error) {
 	rows, err := m.db.GetVaultItems(username)
 	if err != nil {
 		return nil, err
 	}
 
 	var results []VaultItem
+	search := strings.ToLower(strings.TrimSpace(filter.Search))
+	category := strings.TrimSpace(filter.Category)
 	for _, row := range rows {
+		if category != "" && category != "全部" && row.Category != category {
+			continue
+		}
+		if search != "" && !matchesSearch(row, search) {
+			continue
+		}
+
 		// 解密数据
 		decrypted, err := crypto.DecryptAESGCM(keyC, row.EncData)
 		if err != nil {
@@ -79,10 +124,15 @@ func (m *Manager) ListItems(username string, keyC []byte) ([]VaultItem, error) {
 		}
 
 		results = append(results, VaultItem{
-			ID:       row.ID,
-			Site:     row.Site,
-			Username: data.Username,
-			Password: data.Password,
+			ID:        row.ID,
+			Title:     row.Title,
+			Site:      row.Site,
+			URL:       row.URL,
+			Category:  row.Category,
+			Username:  data.Username,
+			Password:  data.Password,
+			Favorite:  row.Favorite,
+			UpdatedAt: row.UpdatedAt,
 		})
 	}
 	return results, nil
@@ -94,9 +144,20 @@ func (m *Manager) ListItems(username string, keyC []byte) ([]VaultItem, error) {
 // 2. 使用 Key C 加密。
 // 3. 更新数据库记录。
 func (m *Manager) UpdateItem(keyC []byte, id int, site, itemUser, itemPass string) error {
-	data := ItemData{
+	return m.UpdateDetailedItem(keyC, id, ItemInput{
+		Title:    site,
+		Site:     site,
+		Category: "未分类",
 		Username: itemUser,
 		Password: itemPass,
+	})
+}
+
+func (m *Manager) UpdateDetailedItem(keyC []byte, id int, input ItemInput) error {
+	input = normalizeInput(input)
+	data := ItemData{
+		Username: input.Username,
+		Password: input.Password,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -109,12 +170,36 @@ func (m *Manager) UpdateItem(keyC []byte, id int, site, itemUser, itemPass strin
 		return err
 	}
 
-	return m.db.UpdateVaultItem(id, site, encData)
+	return m.db.UpdateVaultItemWithMeta(id, input.Title, input.Site, input.URL, input.Category, input.Favorite, encData)
 }
 
 // DeleteItem 删除已存储的密码条目。
 func (m *Manager) DeleteItem(id int) error {
 	return m.db.DeleteVaultItem(id)
+}
+
+func (m *Manager) ListCategories(username string) ([]string, error) {
+	return m.db.ListVaultCategories(username)
+}
+
+func (m *Manager) RenameCategory(username, oldCategory, newCategory string) error {
+	oldCategory = strings.TrimSpace(oldCategory)
+	newCategory = strings.TrimSpace(newCategory)
+	if oldCategory == "" || oldCategory == "未分类" {
+		return fmt.Errorf("cannot rename category %q", oldCategory)
+	}
+	if newCategory == "" {
+		return fmt.Errorf("new category cannot be empty")
+	}
+	return m.db.RenameVaultCategory(username, oldCategory, newCategory)
+}
+
+func (m *Manager) DeleteCategory(username, category string) error {
+	category = strings.TrimSpace(category)
+	if category == "" || category == "未分类" {
+		return fmt.Errorf("cannot delete category %q", category)
+	}
+	return m.db.MoveVaultCategoryToDefault(username, category)
 }
 
 // DeleteAllItems 删除用户的所有密码条目（用于覆盖恢复）
@@ -132,4 +217,32 @@ func (m *Manager) GetEncryptedItems(username string) ([]db.VaultItem, error) {
 // RestoreEncryptedItem 恢复加密的密码条目（用于恢复备份）
 func (m *Manager) RestoreEncryptedItem(username, site string, encData []byte) error {
 	return m.db.SaveVaultItem(username, site, encData)
+}
+
+func normalizeInput(input ItemInput) ItemInput {
+	input.Title = strings.TrimSpace(input.Title)
+	input.Site = strings.TrimSpace(input.Site)
+	input.URL = strings.TrimSpace(input.URL)
+	input.Category = strings.TrimSpace(input.Category)
+	input.Username = strings.TrimSpace(input.Username)
+	if input.Site == "" {
+		input.Site = input.Title
+	}
+	if input.Title == "" {
+		input.Title = input.Site
+	}
+	if input.Category == "" {
+		input.Category = "未分类"
+	}
+	return input
+}
+
+func matchesSearch(item db.VaultItem, search string) bool {
+	values := []string{item.Title, item.Site, item.URL, item.Category}
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), search) {
+			return true
+		}
+	}
+	return false
 }
