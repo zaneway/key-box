@@ -114,6 +114,14 @@ func handleRegister(scanner *bufio.Scanner, s *auth.Service) {
 	scanner.Scan()
 	username := strings.TrimSpace(scanner.Text())
 
+	fmt.Print("登录密码: ")
+	scanner.Scan()
+	password := strings.TrimSpace(scanner.Text())
+	if password == "" {
+		fmt.Println("登录密码不能为空")
+		return
+	}
+
 	fmt.Print("密保问题 1: ")
 	scanner.Scan()
 	q1 := strings.TrimSpace(scanner.Text())
@@ -135,7 +143,7 @@ func handleRegister(scanner *bufio.Scanner, s *auth.Service) {
 	scanner.Scan()
 	a3 := strings.TrimSpace(scanner.Text())
 
-	res, err := s.Register(username, q1, q2, q3, a1, a2, a3)
+	res, err := s.RegisterWithPassword(username, password, q1, q2, q3, a1, a2, a3)
 	if err != nil {
 		fmt.Printf("注册失败: %v\n", err)
 		return
@@ -174,14 +182,42 @@ func handleLogin(scanner *bufio.Scanner, s *auth.Service, v *vault.Manager) {
 	scanner.Scan()
 	username := strings.TrimSpace(scanner.Text())
 
+	requiresSetup, _ := s.RequiresPasswordSetup(username)
+	var password string
+	if !requiresSetup {
+		fmt.Print("登录密码: ")
+		scanner.Scan()
+		password = strings.TrimSpace(scanner.Text())
+	}
+
 	fmt.Print("请输入 6 位 OTP 验证码: ")
 	scanner.Scan()
 	otp := strings.TrimSpace(scanner.Text())
 
-	keyC, err := s.Login(username, otp)
+	var (
+		keyC []byte
+		err  error
+	)
+	if requiresSetup {
+		keyC, err = s.Login(username, otp)
+	} else {
+		keyC, err = s.LoginWithPassword(username, password, otp)
+	}
 	if err != nil {
 		fmt.Printf("登录失败: %v\n", err)
 		return
+	}
+
+	if requiresSetup {
+		fmt.Println("检测到该账号尚未设置登录密码，请先设置登录密码。")
+		fmt.Print("新登录密码: ")
+		scanner.Scan()
+		newPassword := strings.TrimSpace(scanner.Text())
+		if err := s.SetLoginPassword(username, newPassword); err != nil {
+			fmt.Printf("设置登录密码失败: %v\n", err)
+			return
+		}
+		fmt.Println("登录密码已设置。")
 	}
 
 	fmt.Println("登录成功! 进入密码库...")
@@ -263,7 +299,11 @@ func handleReset(scanner *bufio.Scanner, s *auth.Service) {
 	scanner.Scan()
 	a3 := strings.TrimSpace(scanner.Text())
 
-	res, err := s.ResetPassword(username, a1, a2, a3)
+	fmt.Print("新登录密码: ")
+	scanner.Scan()
+	newPassword := strings.TrimSpace(scanner.Text())
+
+	res, err := s.ResetPasswordWithLoginPassword(username, a1, a2, a3, newPassword)
 	if err != nil {
 		fmt.Printf("重置失败: %v\n", err)
 		return

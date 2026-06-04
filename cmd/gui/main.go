@@ -25,6 +25,7 @@ import (
 
 	"key-box/internal/auth"
 	"key-box/internal/config"
+	"key-box/internal/crypto"
 	"key-box/internal/db"
 	"key-box/internal/vault"
 )
@@ -41,6 +42,7 @@ var (
 
 	// 标志：登录后是否自动打开恢复对话框
 	shouldShowRestoreAfterLogin bool
+	autoLockTimer               *time.Timer
 )
 
 func main() {
@@ -224,6 +226,95 @@ func showSystemKeyMismatchDialog(retry func()) {
 	}, myWindow)
 }
 
+func startAutoLock() {
+	if autoLockTimer != nil {
+		autoLockTimer.Stop()
+	}
+	autoLockTimer = time.AfterFunc(10*time.Minute, func() {
+		if currentUser == "" {
+			return
+		}
+		currentUser = ""
+		currentKeyC = nil
+		myWindow.Resize(fyne.NewSize(600, 500))
+		showMainMenu()
+		dialog.ShowInformation("已自动锁定", "应用空闲超过 10 分钟，已返回登录页。", myWindow)
+	})
+}
+
+func copyPasswordToClipboard(password string) {
+	myWindow.Clipboard().SetContent(password)
+	dialog.ShowInformation("已复制", "密码已复制到剪贴板，将在 30 秒后自动清理。", myWindow)
+	time.AfterFunc(30*time.Second, func() {
+		if myWindow.Clipboard().Content() == password {
+			myWindow.Clipboard().SetContent("")
+		}
+	})
+}
+
+func generatePasswordInto(entry *widget.Entry) {
+	password, err := crypto.GeneratePassword(crypto.PasswordGeneratorOptions{
+		Length:      20,
+		Lowercase:   true,
+		Uppercase:   true,
+		Digits:      true,
+		Symbols:     true,
+		NoAmbiguous: true,
+	})
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("生成密码失败: %v", err), myWindow)
+		return
+	}
+	entry.SetText(password)
+}
+
+func showSecurityCenterDialog() {
+	salt, _ := config.GetSalt()
+	saltStatus := "已配置"
+	if strings.TrimSpace(salt) == "" {
+		saltStatus = "未配置"
+	}
+
+	entryPassword := widget.NewPasswordEntry()
+	entryPassword.PlaceHolder = "新登录密码"
+	entryConfirm := widget.NewPasswordEntry()
+	entryConfirm.PlaceHolder = "确认新登录密码"
+
+	content := container.NewVScroll(container.NewVBox(
+		widget.NewLabelWithStyle("安全状态", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel("当前用户: "+currentUser),
+		widget.NewLabel("SEC_APP_SALT: "+saltStatus),
+		widget.NewLabel("自动锁定: 10 分钟"),
+		widget.NewLabel("剪贴板保护: 复制密码 30 秒后自动清理"),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("修改登录密码", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		entryPassword,
+		entryConfirm,
+		widget.NewButton("保存新登录密码", func() {
+			if entryPassword.Text == "" {
+				dialog.ShowError(fmt.Errorf("新登录密码不能为空"), myWindow)
+				return
+			}
+			if entryPassword.Text != entryConfirm.Text {
+				dialog.ShowError(fmt.Errorf("两次输入的登录密码不一致"), myWindow)
+				return
+			}
+			if err := authService.SetLoginPassword(currentUser, entryPassword.Text); err != nil {
+				dialog.ShowError(fmt.Errorf("修改登录密码失败: %v", err), myWindow)
+				return
+			}
+			dialog.ShowInformation("成功", "登录密码已更新", myWindow)
+		}),
+		widget.NewSeparator(),
+		widget.NewLabel("建议：修改重要密码后及时备份，并妥善保管 ~/.key-box.config。"),
+	))
+	content.SetMinSize(fyne.NewSize(480, 420))
+
+	d := dialog.NewCustom("安全中心", "关闭", content, myWindow)
+	d.Resize(fyne.NewSize(560, 500))
+	d.Show()
+}
+
 func showMainMenu() {
 	// 标题区域
 	titleLabel := widget.NewLabelWithStyle("🔐 Key-Box", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
@@ -264,14 +355,20 @@ func createLoginContent() fyne.CanvasObject {
 	entryUser.PlaceHolder = "👤 用户名"
 	entryUser.Resize(fyne.NewSize(250, 40))
 
+	entryPassword := widget.NewPasswordEntry()
+	entryPassword.PlaceHolder = "🔑 登录密码（老账号首次迁移可留空）"
+	entryPassword.Resize(fyne.NewSize(250, 40))
+
 	entryOTP := widget.NewEntry()
 	entryOTP.PlaceHolder = "🔢 6位 OTP 验证码"
 	entryOTP.Resize(fyne.NewSize(250, 40))
 
 	// 登录处理函数
 	var performLogin func()
+	var openVaultAfterLogin func()
 	performLogin = func() {
 		user := entryUser.Text
+		password := entryPassword.Text
 		otp := entryOTP.Text
 
 		if user == "" || otp == "" {
@@ -279,7 +376,21 @@ func createLoginContent() fyne.CanvasObject {
 			return
 		}
 
-		keyC, err := authService.Login(user, otp)
+		requiresSetup, _ := authService.RequiresPasswordSetup(user)
+		if !requiresSetup && password == "" {
+			dialog.ShowError(fmt.Errorf("请输入登录密码"), myWindow)
+			return
+		}
+
+		var (
+			keyC []byte
+			err  error
+		)
+		if requiresSetup {
+			keyC, err = authService.Login(user, otp)
+		} else {
+			keyC, err = authService.LoginWithPassword(user, password, otp)
+		}
 		if err != nil {
 			if errors.Is(err, auth.ErrSystemKeyMismatch) {
 				showSystemKeyMismatchDialog(performLogin)
@@ -293,6 +404,17 @@ func createLoginContent() fyne.CanvasObject {
 		currentUser = user
 		currentKeyC = keyC
 
+		if requiresSetup {
+			showForceSetPasswordDialog(func() {
+				openVaultAfterLogin()
+			})
+			return
+		}
+
+		openVaultAfterLogin()
+	}
+
+	openVaultAfterLogin = func() {
 		// 检查是否需要自动打开恢复对话框
 		if shouldShowRestoreAfterLogin {
 			shouldShowRestoreAfterLogin = false
@@ -336,6 +458,7 @@ func createLoginContent() fyne.CanvasObject {
 		widget.NewLabelWithStyle("账户登录", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		widget.NewSeparator(),
 		entryUser,
+		entryPassword,
 		entryOTP,
 		btnLogin,
 		widget.NewSeparator(),
@@ -349,9 +472,53 @@ func createLoginContent() fyne.CanvasObject {
 	return formContainer
 }
 
+func showForceSetPasswordDialog(onDone func()) {
+	entryPassword := widget.NewPasswordEntry()
+	entryPassword.PlaceHolder = "新登录密码"
+	entryConfirm := widget.NewPasswordEntry()
+	entryConfirm.PlaceHolder = "确认登录密码"
+
+	var d dialog.Dialog
+	btnSave := widget.NewButton("设置登录密码", func() {
+		if entryPassword.Text == "" {
+			dialog.ShowError(fmt.Errorf("登录密码不能为空"), myWindow)
+			return
+		}
+		if entryPassword.Text != entryConfirm.Text {
+			dialog.ShowError(fmt.Errorf("两次输入的登录密码不一致"), myWindow)
+			return
+		}
+		if err := authService.SetLoginPassword(currentUser, entryPassword.Text); err != nil {
+			dialog.ShowError(fmt.Errorf("设置登录密码失败: %v", err), myWindow)
+			return
+		}
+		d.Hide()
+		onDone()
+	})
+	btnSave.Importance = widget.HighImportance
+
+	content := container.NewVBox(
+		widget.NewLabel("检测到该账号尚未设置登录密码。"),
+		widget.NewLabel("为升级到密码 + OTP 登录，请先设置登录密码。"),
+		widget.NewSeparator(),
+		entryPassword,
+		entryConfirm,
+		btnSave,
+	)
+
+	d = dialog.NewCustom("设置登录密码", "", content, myWindow)
+	d.Resize(fyne.NewSize(420, 260))
+	d.Show()
+}
+
 func showRegisterDialog() {
 	entryUser := widget.NewEntry()
 	entryUser.PlaceHolder = "用户名"
+
+	entryPassword := widget.NewPasswordEntry()
+	entryPassword.PlaceHolder = "登录密码"
+	entryConfirmPassword := widget.NewPasswordEntry()
+	entryConfirmPassword.PlaceHolder = "确认登录密码"
 
 	entryQ1 := widget.NewEntry()
 	entryQ1.PlaceHolder = "密保问题 1"
@@ -382,9 +549,18 @@ func showRegisterDialog() {
 			dialog.ShowError(fmt.Errorf("用户名不能为空"), myWindow)
 			return
 		}
+		if entryPassword.Text == "" {
+			dialog.ShowError(fmt.Errorf("登录密码不能为空"), myWindow)
+			return
+		}
+		if entryPassword.Text != entryConfirmPassword.Text {
+			dialog.ShowError(fmt.Errorf("两次输入的登录密码不一致"), myWindow)
+			return
+		}
 
-		res, err := authService.Register(
+		res, err := authService.RegisterWithPassword(
 			entryUser.Text,
+			entryPassword.Text,
 			entryQ1.Text, entryQ2.Text, entryQ3.Text,
 			entryA1.Text, entryA2.Text, entryA3.Text,
 		)
@@ -439,6 +615,8 @@ func showRegisterDialog() {
 
 	form := container.NewVBox(
 		entryUser,
+		entryPassword,
+		entryConfirmPassword,
 		widget.NewSeparator(),
 		entryQ1, entryA1,
 		widget.NewSeparator(),
@@ -469,6 +647,11 @@ func showResetDialog() {
 	entryA3 := widget.NewEntry()
 	entryA3.PlaceHolder = "答案 3"
 
+	entryPassword := widget.NewPasswordEntry()
+	entryPassword.PlaceHolder = "新登录密码"
+	entryConfirmPassword := widget.NewPasswordEntry()
+	entryConfirmPassword.PlaceHolder = "确认新登录密码"
+
 	labelQ1 := widget.NewLabel("问题 1: (输入用户名后加载)")
 	labelQ2 := widget.NewLabel("问题 2: (输入用户名后加载)")
 	labelQ3 := widget.NewLabel("问题 3: (输入用户名后加载)")
@@ -490,7 +673,16 @@ func showResetDialog() {
 	var d dialog.Dialog
 
 	btnReset := widget.NewButton("重置密码", func() {
-		res, err := authService.ResetPassword(entryUser.Text, entryA1.Text, entryA2.Text, entryA3.Text)
+		if entryPassword.Text == "" {
+			dialog.ShowError(fmt.Errorf("新登录密码不能为空"), myWindow)
+			return
+		}
+		if entryPassword.Text != entryConfirmPassword.Text {
+			dialog.ShowError(fmt.Errorf("两次输入的登录密码不一致"), myWindow)
+			return
+		}
+
+		res, err := authService.ResetPasswordWithLoginPassword(entryUser.Text, entryA1.Text, entryA2.Text, entryA3.Text, entryPassword.Text)
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("重置失败: %v", err), myWindow)
 			return
@@ -548,6 +740,9 @@ func showResetDialog() {
 		labelQ1, entryA1,
 		labelQ2, entryA2,
 		labelQ3, entryA3,
+		widget.NewSeparator(),
+		entryPassword,
+		entryConfirmPassword,
 		layout.NewSpacer(),
 		btnReset,
 	))
@@ -670,6 +865,7 @@ func (r *tappableRenderer) Destroy() {}
 func showVaultScreen() {
 	// 调整窗口大小
 	myWindow.Resize(fyne.NewSize(800, 600))
+	startAutoLock()
 
 	// Vault Toolbar
 	btnAdd := widget.NewButtonWithIcon("添加", theme.ContentAddIcon(), func() {
@@ -684,7 +880,18 @@ func showVaultScreen() {
 		showRestoreDialog()
 	})
 
+	btnCategory := widget.NewButtonWithIcon("分类", theme.ListIcon(), func() {
+		showCategoryDialog()
+	})
+
+	btnSecurity := widget.NewButtonWithIcon("安全中心", theme.SettingsIcon(), func() {
+		showSecurityCenterDialog()
+	})
+
 	btnLogout := widget.NewButtonWithIcon("退出", theme.LogoutIcon(), func() {
+		if autoLockTimer != nil {
+			autoLockTimer.Stop()
+		}
 		currentUser = ""
 		currentKeyC = nil
 		myWindow.Resize(fyne.NewSize(600, 500))
@@ -693,7 +900,10 @@ func showVaultScreen() {
 
 	// 搜索框
 	searchEntry := widget.NewEntry()
-	searchEntry.PlaceHolder = "🔍 搜索网站或账号..."
+	searchEntry.PlaceHolder = "🔍 搜索标题、网站、URL 或分类..."
+
+	categoryEntry := widget.NewEntry()
+	categoryEntry.PlaceHolder = "分类筛选（留空或输入“全部”显示全部）"
 
 	// Content List
 	listContainer := container.NewVBox()
@@ -702,6 +912,7 @@ func showVaultScreen() {
 
 	refreshList = func() {
 		searchText := searchEntry.Text
+		categoryText := categoryEntry.Text
 		listContainer.Objects = nil
 
 		// 标题区域
@@ -715,30 +926,19 @@ func showVaultScreen() {
 		listContainer.Add(titleContainer)
 		listContainer.Add(widget.NewSeparator())
 
-		items, err := vaultManager.ListItems(currentUser, currentKeyC)
+		filteredItems, err := vaultManager.ListItemsFiltered(currentUser, currentKeyC, vault.ItemFilter{
+			Search:   searchText,
+			Category: categoryText,
+		})
 		if err != nil {
 			dialog.ShowError(fmt.Errorf("读取失败: %v", err), myWindow)
 			return
 		}
 
-		// 过滤搜索结果
-		var filteredItems []vault.VaultItem
-		if searchText == "" {
-			filteredItems = items
-		} else {
-			searchLower := strings.ToLower(searchText)
-			for _, item := range items {
-				if strings.Contains(strings.ToLower(item.Site), searchLower) ||
-					strings.Contains(strings.ToLower(item.Username), searchLower) {
-					filteredItems = append(filteredItems, item)
-				}
-			}
-		}
-
 		// 空状态
 		if len(filteredItems) == 0 {
 			emptyText := "暂无密码记录"
-			if searchText != "" {
+			if searchText != "" || categoryText != "" {
 				emptyText = "未找到匹配的密码记录"
 			}
 			listContainer.Add(container.NewCenter(
@@ -752,14 +952,14 @@ func showVaultScreen() {
 			headerBg := canvas.NewRectangle(color.RGBA{R: 200, G: 200, B: 200, A: 255})
 
 			// 定义列宽
-			col1Width := float32(100) // 网站列（调小）
+			col1Width := float32(220) // 条目信息列
 			col2Width := float32(160) // 账号列
 			col3Width := float32(320) // 密码列（加宽）
 
 			// 创建各列标题，使用透明背景矩形控制宽度
 			col1Spacer := canvas.NewRectangle(color.Transparent)
 			col1Spacer.SetMinSize(fyne.NewSize(col1Width, 1))
-			col1Label := widget.NewLabelWithStyle("  网站", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			col1Label := widget.NewLabelWithStyle("  标题 / 网站 / 分类", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			col1Box := container.NewStack(col1Spacer, col1Label)
 
 			col2Spacer := canvas.NewRectangle(color.Transparent)
@@ -829,8 +1029,7 @@ func showVaultScreen() {
 				// 操作按钮组 - 单独放在一个 HBox 中
 				actionButtons := container.NewHBox(
 					widget.NewButtonWithIcon("复制", theme.ContentCopyIcon(), func() {
-						myWindow.Clipboard().SetContent(item.Password)
-						dialog.ShowInformation("已复制", "密码已复制到剪贴板", myWindow)
+						copyPasswordToClipboard(item.Password)
 					}),
 					widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), func() {
 						showEditVaultItemDialog(item, refreshList)
@@ -853,12 +1052,23 @@ func showVaultScreen() {
 				)
 
 				// 使用与表头完全相同的列宽和方法
-				col1Width := float32(100) // 网站列（调小）
+				col1Width := float32(220) // 条目信息列
 				col2Width := float32(160) // 账号列
 				col3Width := float32(320) // 密码列（加宽）
 
-				// 第一列：网站 - 固定宽度，超长文本可点击查看
-				siteCell := createFixedWidthTextCell(item.Site, 8, col1Width, fyne.TextStyle{Bold: true})
+				metaText := fmt.Sprintf("%s | %s | %s", item.Title, item.Site, item.Category)
+				if item.Favorite {
+					metaText = "★ " + metaText
+				}
+				if item.URL != "" {
+					metaText = metaText + " | " + item.URL
+				}
+				if item.UpdatedAt != "" {
+					metaText = metaText + " | 更新: " + item.UpdatedAt
+				}
+
+				// 第一列：标题/网站/分类 - 固定宽度，超长文本可点击查看
+				siteCell := createFixedWidthTextCell(metaText, 22, col1Width, fyne.TextStyle{Bold: true})
 
 				// 第二列：账号 - 固定宽度，超长文本可点击查看
 				usernameCell := createFixedWidthTextCell(item.Username, 12, col2Width, fyne.TextStyle{})
@@ -887,6 +1097,9 @@ func showVaultScreen() {
 	searchEntry.OnChanged = func(string) {
 		refreshList()
 	}
+	categoryEntry.OnChanged = func(string) {
+		refreshList()
+	}
 
 	// Initial Load
 	refreshList()
@@ -898,6 +1111,8 @@ func showVaultScreen() {
 			btnAdd,
 			btnBackup,
 			btnRestore,
+			btnCategory,
+			btnSecurity,
 			layout.NewSpacer(),
 			btnLogout,
 		),
@@ -908,7 +1123,7 @@ func showVaultScreen() {
 		container.NewVBox(
 			toolbar,
 			widget.NewSeparator(),
-			searchEntry,
+			container.NewGridWithColumns(2, searchEntry, categoryEntry),
 			widget.NewSeparator(),
 		),
 		nil, nil, nil,
@@ -918,23 +1133,118 @@ func showVaultScreen() {
 	myWindow.SetContent(content)
 }
 
+func showCategoryDialog() {
+	categories, err := vaultManager.ListCategories(currentUser)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("读取分类失败: %v", err), myWindow)
+		return
+	}
+
+	categoryList := container.NewVBox()
+	if len(categories) == 0 {
+		categoryList.Add(widget.NewLabel("暂无分类"))
+	} else {
+		for _, category := range categories {
+			categoryList.Add(widget.NewLabel("• " + category))
+		}
+	}
+
+	entryOld := widget.NewEntry()
+	entryOld.PlaceHolder = "原分类名"
+	entryNew := widget.NewEntry()
+	entryNew.PlaceHolder = "新分类名"
+	entryDelete := widget.NewEntry()
+	entryDelete.PlaceHolder = "要删除的分类名（条目会移动到未分类）"
+
+	content := container.NewVScroll(container.NewVBox(
+		widget.NewLabelWithStyle("当前分类", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		categoryList,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("重命名分类", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		entryOld,
+		entryNew,
+		widget.NewButton("重命名", func() {
+			if err := vaultManager.RenameCategory(currentUser, entryOld.Text, entryNew.Text); err != nil {
+				dialog.ShowError(fmt.Errorf("重命名失败: %v", err), myWindow)
+				return
+			}
+			dialog.ShowInformation("成功", "分类已重命名", myWindow)
+			showVaultScreen()
+		}),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("删除分类", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		entryDelete,
+		widget.NewButton("删除并移动到未分类", func() {
+			if err := vaultManager.DeleteCategory(currentUser, entryDelete.Text); err != nil {
+				dialog.ShowError(fmt.Errorf("删除分类失败: %v", err), myWindow)
+				return
+			}
+			dialog.ShowInformation("成功", "分类已删除，条目已移动到未分类", myWindow)
+			showVaultScreen()
+		}),
+	))
+	content.SetMinSize(fyne.NewSize(460, 420))
+
+	d := dialog.NewCustom("分类管理", "关闭", content, myWindow)
+	d.Resize(fyne.NewSize(520, 500))
+	d.Show()
+}
+
 func showAddVaultItemDialog() {
+	entryTitle := widget.NewEntry()
+	entryTitle.PlaceHolder = "显示标题（如 GitHub 公司账号）"
 	entrySite := widget.NewEntry()
 	entrySite.PlaceHolder = "网站/应用"
+	entryURL := widget.NewEntry()
+	entryURL.PlaceHolder = "URL（可选）"
+	entryCategory := widget.NewEntry()
+	entryCategory.PlaceHolder = "分类（如 工作、个人、财务）"
 	entryUser := widget.NewEntry()
 	entryUser.PlaceHolder = "用户名/邮箱"
 	entryPass := widget.NewPasswordEntry()
 	entryPass.PlaceHolder = "密码"
+	checkFavorite := widget.NewCheck("收藏", nil)
+	btnGenerate := widget.NewButton("生成强密码", func() {
+		generatePasswordInto(entryPass)
+	})
 
-	dialog.ShowCustomConfirm("添加密码", "保存", "取消", container.NewVBox(
-		entrySite, entryUser, entryPass,
-	), func(confirm bool) {
+	content := container.NewVScroll(container.NewVBox(
+		widget.NewLabel("标题"),
+		entryTitle,
+		widget.NewLabel("网站/应用"),
+		entrySite,
+		widget.NewLabel("URL"),
+		entryURL,
+		widget.NewLabel("分类"),
+		entryCategory,
+		widget.NewLabel("用户名/邮箱"),
+		entryUser,
+		widget.NewLabel("密码"),
+		entryPass,
+		btnGenerate,
+		checkFavorite,
+	))
+	content.SetMinSize(fyne.NewSize(520, 420))
+
+	d := dialog.NewCustomConfirm("添加密码", "保存", "取消", content, func(confirm bool) {
 		if confirm {
-			if entrySite.Text == "" || entryPass.Text == "" {
-				dialog.ShowError(fmt.Errorf("网站和密码不能为空"), myWindow)
+			if entryTitle.Text == "" && entrySite.Text == "" {
+				dialog.ShowError(fmt.Errorf("标题或网站不能为空"), myWindow)
 				return
 			}
-			err := vaultManager.AddItem(currentUser, currentKeyC, entrySite.Text, entryUser.Text, entryPass.Text)
+			if entryPass.Text == "" {
+				dialog.ShowError(fmt.Errorf("密码不能为空"), myWindow)
+				return
+			}
+			err := vaultManager.AddDetailedItem(currentUser, currentKeyC, vault.ItemInput{
+				Title:    entryTitle.Text,
+				Site:     entrySite.Text,
+				URL:      entryURL.Text,
+				Category: entryCategory.Text,
+				Username: entryUser.Text,
+				Password: entryPass.Text,
+				Favorite: checkFavorite.Checked,
+			})
 			if err != nil {
 				dialog.ShowError(fmt.Errorf("添加失败: %v", err), myWindow)
 			} else {
@@ -943,11 +1253,22 @@ func showAddVaultItemDialog() {
 			}
 		}
 	}, myWindow)
+	d.Resize(fyne.NewSize(600, 520))
+	d.Show()
 }
 
 func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
+	entryTitle := widget.NewEntry()
+	entryTitle.SetText(item.Title)
+
 	entrySite := widget.NewEntry()
 	entrySite.SetText(item.Site)
+
+	entryURL := widget.NewEntry()
+	entryURL.SetText(item.URL)
+
+	entryCategory := widget.NewEntry()
+	entryCategory.SetText(item.Category)
 
 	entryUser := widget.NewEntry()
 	entryUser.SetText(item.Username)
@@ -955,20 +1276,49 @@ func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
 	entryPass := widget.NewPasswordEntry()
 	entryPass.SetText(item.Password)
 
-	dialog.ShowCustomConfirm("编辑密码", "保存", "取消", container.NewVBox(
+	checkFavorite := widget.NewCheck("收藏", nil)
+	checkFavorite.SetChecked(item.Favorite)
+	btnGenerate := widget.NewButton("生成强密码", func() {
+		generatePasswordInto(entryPass)
+	})
+
+	content := container.NewVScroll(container.NewVBox(
+		widget.NewLabel("标题:"),
+		entryTitle,
 		widget.NewLabel("网站/应用:"),
 		entrySite,
+		widget.NewLabel("URL:"),
+		entryURL,
+		widget.NewLabel("分类:"),
+		entryCategory,
 		widget.NewLabel("用户名/邮箱:"),
 		entryUser,
 		widget.NewLabel("密码:"),
 		entryPass,
-	), func(confirm bool) {
+		btnGenerate,
+		checkFavorite,
+	))
+	content.SetMinSize(fyne.NewSize(520, 420))
+
+	d := dialog.NewCustomConfirm("编辑密码", "保存", "取消", content, func(confirm bool) {
 		if confirm {
-			if entrySite.Text == "" || entryPass.Text == "" {
-				dialog.ShowError(fmt.Errorf("网站和密码不能为空"), myWindow)
+			if entryTitle.Text == "" && entrySite.Text == "" {
+				dialog.ShowError(fmt.Errorf("标题或网站不能为空"), myWindow)
 				return
 			}
-			err := vaultManager.UpdateItem(currentKeyC, item.ID, entrySite.Text, entryUser.Text, entryPass.Text)
+			if entryPass.Text == "" {
+				dialog.ShowError(fmt.Errorf("密码不能为空"), myWindow)
+				return
+			}
+			err := vaultManager.UpdateDetailedItem(currentKeyC, item.ID, vault.ItemInput{
+				Title:    entryTitle.Text,
+				Site:     entrySite.Text,
+				URL:      entryURL.Text,
+				Category: entryCategory.Text,
+				Username: entryUser.Text,
+				Password: entryPass.Text,
+				Favorite: checkFavorite.Checked,
+			})
 			if err != nil {
 				dialog.ShowError(fmt.Errorf("更新失败: %v", err), myWindow)
 			} else {
@@ -977,6 +1327,8 @@ func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
 			}
 		}
 	}, myWindow)
+	d.Resize(fyne.NewSize(600, 520))
+	d.Show()
 }
 
 // Helper for data binding simple string

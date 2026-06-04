@@ -122,6 +122,22 @@ func (s *Service) Register(username, q1, q2, q3, a1, a2, a3 string) (*RegisterRe
 	}, nil
 }
 
+func (s *Service) RegisterWithPassword(username, password, q1, q2, q3, a1, a2, a3 string) (*RegisterResult, error) {
+	verifier, err := crypto.NewPasswordVerifier(password)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.Register(username, q1, q2, q3, a1, a2, a3)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.setLoginPasswordVerifier(username, verifier); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Service) GetSecurityQuestions(username string) ([]string, error) {
 	u, err := s.db.GetUser(username)
 	if err != nil {
@@ -187,6 +203,34 @@ func (s *Service) Login(username, code string) ([]byte, error) {
 	}
 
 	return keyC, nil
+}
+
+func (s *Service) LoginWithPassword(username, password, code string) ([]byte, error) {
+	requiresSetup, err := s.RequiresPasswordSetup(username)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+	if requiresSetup {
+		return nil, errors.New("login password is not set")
+	}
+
+	stored, err := s.db.GetPasswordVerifier(username)
+	if err != nil {
+		return nil, errors.New("failed to load password verifier")
+	}
+	ok, err := crypto.VerifyPassword(password, &crypto.PasswordVerifier{
+		Salt:     stored.Salt,
+		Verifier: stored.Verifier,
+		KDF:      stored.KDF,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("invalid login password")
+	}
+
+	return s.Login(username, code)
 }
 
 func (s *Service) updateEncryptedSystemKey(username string, keyB, currentRootKey []byte, previousVersion string) error {
@@ -291,6 +335,42 @@ func (s *Service) ResetPassword(username, a1, a2, a3 string) (*RegisterResult, e
 	return &RegisterResult{
 		SecretKeyBBase32: crypto.EncodeKeyB(newKeyB),
 	}, nil
+}
+
+func (s *Service) ResetPasswordWithLoginPassword(username, a1, a2, a3, newPassword string) (*RegisterResult, error) {
+	verifier, err := crypto.NewPasswordVerifier(newPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.ResetPassword(username, a1, a2, a3)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.setLoginPasswordVerifier(username, verifier); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) RequiresPasswordSetup(username string) (bool, error) {
+	return s.db.RequiresPasswordSetup(username)
+}
+
+func (s *Service) SetLoginPassword(username, password string) error {
+	verifier, err := crypto.NewPasswordVerifier(password)
+	if err != nil {
+		return err
+	}
+	return s.setLoginPasswordVerifier(username, verifier)
+}
+
+func (s *Service) setLoginPasswordVerifier(username string, verifier *crypto.PasswordVerifier) error {
+	return s.db.SetPasswordVerifier(username, &db.PasswordVerifier{
+		Salt:     verifier.Salt,
+		Verifier: verifier.Verifier,
+		KDF:      verifier.KDF,
+	})
 }
 
 // GetUserInfo 获取用户完整信息（用于备份）
