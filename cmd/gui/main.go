@@ -242,11 +242,114 @@ func startAutoLock() {
 	})
 }
 
+func copyTextToClipboard(content, label string, clearAfter time.Duration) {
+	if content == "" {
+		dialog.ShowInformation("无法复制", label+"为空", myWindow)
+		return
+	}
+
+	myWindow.Clipboard().SetContent(content)
+	if clearAfter > 0 {
+		dialog.ShowInformation("已复制", fmt.Sprintf("%s已复制到剪贴板，将在 %d 秒后自动清理。", label, int(clearAfter.Seconds())), myWindow)
+		clearClipboardAfter(content, clearAfter)
+		return
+	}
+	dialog.ShowInformation("已复制", label+"已复制到剪贴板", myWindow)
+}
+
 func copyPasswordToClipboard(password string) {
-	myWindow.Clipboard().SetContent(password)
-	dialog.ShowInformation("已复制", "密码已复制到剪贴板，将在 30 秒后自动清理。", myWindow)
-	time.AfterFunc(30*time.Second, func() {
-		if myWindow.Clipboard().Content() == password {
+	copyTextToClipboard(password, "密码", 30*time.Second)
+}
+
+func copyAccountToClipboard(username string) {
+	copyTextToClipboard(username, "账号", 0)
+}
+
+func copyRemarkToClipboard(remark string) {
+	copyTextToClipboard(remark, "备注", 0)
+}
+
+func createCopyableFixedWidthTextCell(fullText string, maxChars int, width float32, style fyne.TextStyle) fyne.CanvasObject {
+	copyButton := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		copyAccountToClipboard(fullText)
+	})
+	copyButton.Importance = widget.LowImportance
+	if fullText == "" {
+		copyButton.Disable()
+	}
+
+	textWidth := width - copyButton.MinSize().Width
+	if textWidth < 80 {
+		textWidth = 80
+	}
+	textCell := createFixedWidthTextCell(fullText, maxChars, textWidth, style)
+
+	spacer := canvas.NewRectangle(color.Transparent)
+	spacer.SetMinSize(fyne.NewSize(width, 1))
+	return container.NewStack(
+		spacer,
+		container.NewBorder(nil, nil, nil, copyButton, textCell),
+	)
+}
+
+func showSelectableTextDialog(title, contentText string) {
+	entry := widget.NewMultiLineEntry()
+	entry.SetText(contentText)
+	entry.Wrapping = fyne.TextWrapWord
+	entry.SetMinRowsVisible(6)
+
+	content := container.NewBorder(
+		nil,
+		widget.NewButtonWithIcon("复制全部", theme.ContentCopyIcon(), func() {
+			copyTextToClipboard(contentText, title, 0)
+		}),
+		nil,
+		nil,
+		entry,
+	)
+
+	d := dialog.NewCustom(title, "关闭", content, myWindow)
+	d.Resize(fyne.NewSize(540, 360))
+	d.Show()
+}
+
+func createRemarkCell(remark string, maxChars int, width float32) fyne.CanvasObject {
+	displayText := remark
+	if displayText == "" {
+		displayText = "-"
+	}
+
+	viewButton := widget.NewButtonWithIcon("", theme.SearchIcon(), func() {
+		showSelectableTextDialog("备注", remark)
+	})
+	copyButton := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
+		copyRemarkToClipboard(remark)
+	})
+	viewButton.Importance = widget.LowImportance
+	copyButton.Importance = widget.LowImportance
+	if remark == "" {
+		viewButton.Disable()
+		copyButton.Disable()
+	}
+
+	buttons := container.NewHBox(viewButton, copyButton)
+	textWidth := width - buttons.MinSize().Width
+	if textWidth < 80 {
+		textWidth = 80
+	}
+	textCell := createFixedWidthTextCell(displayText, maxChars, textWidth, fyne.TextStyle{})
+
+	spacer := canvas.NewRectangle(color.Transparent)
+	spacer.SetMinSize(fyne.NewSize(width, 1))
+	return container.NewStack(
+		spacer,
+		container.NewBorder(nil, nil, nil, buttons, textCell),
+	)
+}
+
+func clearClipboardAfter(content string, delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		if myWindow.Clipboard().Content() == content {
 			myWindow.Clipboard().SetContent("")
 		}
 	})
@@ -864,7 +967,7 @@ func (r *tappableRenderer) Destroy() {}
 
 func showVaultScreen() {
 	// 调整窗口大小
-	myWindow.Resize(fyne.NewSize(800, 600))
+	myWindow.Resize(fyne.NewSize(1100, 650))
 	startAutoLock()
 
 	// Vault Toolbar
@@ -900,7 +1003,7 @@ func showVaultScreen() {
 
 	// 搜索框
 	searchEntry := widget.NewEntry()
-	searchEntry.PlaceHolder = "🔍 搜索标题、网站、URL 或分类..."
+	searchEntry.PlaceHolder = "🔍 搜索标题、网站、URL、分类、账号或备注..."
 
 	categoryEntry := widget.NewEntry()
 	categoryEntry.PlaceHolder = "分类筛选（留空或输入“全部”显示全部）"
@@ -952,9 +1055,10 @@ func showVaultScreen() {
 			headerBg := canvas.NewRectangle(color.RGBA{R: 200, G: 200, B: 200, A: 255})
 
 			// 定义列宽
-			col1Width := float32(220) // 条目信息列
-			col2Width := float32(160) // 账号列
-			col3Width := float32(320) // 密码列（加宽）
+			col1Width := float32(210)      // 条目信息列
+			col2Width := float32(150)      // 账号列
+			colRemarkWidth := float32(220) // 备注列
+			col3Width := float32(300)      // 密码列
 
 			// 创建各列标题，使用透明背景矩形控制宽度
 			col1Spacer := canvas.NewRectangle(color.Transparent)
@@ -966,6 +1070,11 @@ func showVaultScreen() {
 			col2Spacer.SetMinSize(fyne.NewSize(col2Width, 1))
 			col2Label := widget.NewLabelWithStyle("  账号", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 			col2Box := container.NewStack(col2Spacer, col2Label)
+
+			colRemarkSpacer := canvas.NewRectangle(color.Transparent)
+			colRemarkSpacer.SetMinSize(fyne.NewSize(colRemarkWidth, 1))
+			colRemarkLabel := widget.NewLabelWithStyle("  备注", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+			colRemarkBox := container.NewStack(colRemarkSpacer, colRemarkLabel)
 
 			col3Spacer := canvas.NewRectangle(color.Transparent)
 			col3Spacer.SetMinSize(fyne.NewSize(col3Width, 1))
@@ -979,6 +1088,7 @@ func showVaultScreen() {
 				container.NewHBox(
 					col1Box,
 					col2Box,
+					colRemarkBox,
 					col3Box,
 					col4Label,
 				),
@@ -1052,9 +1162,10 @@ func showVaultScreen() {
 				)
 
 				// 使用与表头完全相同的列宽和方法
-				col1Width := float32(220) // 条目信息列
-				col2Width := float32(160) // 账号列
-				col3Width := float32(320) // 密码列（加宽）
+				col1Width := float32(210)      // 条目信息列
+				col2Width := float32(150)      // 账号列
+				colRemarkWidth := float32(220) // 备注列
+				col3Width := float32(300)      // 密码列
 
 				metaText := fmt.Sprintf("%s | %s | %s", item.Title, item.Site, item.Category)
 				if item.Favorite {
@@ -1070,10 +1181,13 @@ func showVaultScreen() {
 				// 第一列：标题/网站/分类 - 固定宽度，超长文本可点击查看
 				siteCell := createFixedWidthTextCell(metaText, 22, col1Width, fyne.TextStyle{Bold: true})
 
-				// 第二列：账号 - 固定宽度，超长文本可点击查看
-				usernameCell := createFixedWidthTextCell(item.Username, 12, col2Width, fyne.TextStyle{})
+				// 第二列：账号 - 固定宽度，支持复制，超长文本可点击查看
+				usernameCell := createCopyableFixedWidthTextCell(item.Username, 12, col2Width, fyne.TextStyle{})
 
-				// 第三列：密码 - 固定宽度容器
+				// 第三列：备注 - 固定宽度，支持直接复制和选择复制
+				remarkCell := createRemarkCell(item.Remark, 16, colRemarkWidth)
+
+				// 第四列：密码 - 固定宽度容器
 				col3Spacer := canvas.NewRectangle(color.Transparent)
 				col3Spacer.SetMinSize(fyne.NewSize(col3Width, 1))
 				passBox := container.NewStack(col3Spacer, passColumn)
@@ -1081,6 +1195,7 @@ func showVaultScreen() {
 				cardContent := container.NewHBox(
 					siteCell,
 					usernameCell,
+					remarkCell,
 					passBox,
 					actionButtons,
 				)
@@ -1203,6 +1318,10 @@ func showAddVaultItemDialog() {
 	entryUser.PlaceHolder = "用户名/邮箱"
 	entryPass := widget.NewPasswordEntry()
 	entryPass.PlaceHolder = "密码"
+	entryRemark := widget.NewMultiLineEntry()
+	entryRemark.PlaceHolder = "备注（可选）"
+	entryRemark.Wrapping = fyne.TextWrapWord
+	entryRemark.SetMinRowsVisible(3)
 	checkFavorite := widget.NewCheck("收藏", nil)
 	btnGenerate := widget.NewButton("生成强密码", func() {
 		generatePasswordInto(entryPass)
@@ -1222,9 +1341,11 @@ func showAddVaultItemDialog() {
 		widget.NewLabel("密码"),
 		entryPass,
 		btnGenerate,
+		widget.NewLabel("备注"),
+		entryRemark,
 		checkFavorite,
 	))
-	content.SetMinSize(fyne.NewSize(520, 420))
+	content.SetMinSize(fyne.NewSize(520, 500))
 
 	d := dialog.NewCustomConfirm("添加密码", "保存", "取消", content, func(confirm bool) {
 		if confirm {
@@ -1243,6 +1364,7 @@ func showAddVaultItemDialog() {
 				Category: entryCategory.Text,
 				Username: entryUser.Text,
 				Password: entryPass.Text,
+				Remark:   entryRemark.Text,
 				Favorite: checkFavorite.Checked,
 			})
 			if err != nil {
@@ -1253,7 +1375,7 @@ func showAddVaultItemDialog() {
 			}
 		}
 	}, myWindow)
-	d.Resize(fyne.NewSize(600, 520))
+	d.Resize(fyne.NewSize(600, 620))
 	d.Show()
 }
 
@@ -1276,6 +1398,11 @@ func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
 	entryPass := widget.NewPasswordEntry()
 	entryPass.SetText(item.Password)
 
+	entryRemark := widget.NewMultiLineEntry()
+	entryRemark.SetText(item.Remark)
+	entryRemark.Wrapping = fyne.TextWrapWord
+	entryRemark.SetMinRowsVisible(3)
+
 	checkFavorite := widget.NewCheck("收藏", nil)
 	checkFavorite.SetChecked(item.Favorite)
 	btnGenerate := widget.NewButton("生成强密码", func() {
@@ -1296,9 +1423,11 @@ func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
 		widget.NewLabel("密码:"),
 		entryPass,
 		btnGenerate,
+		widget.NewLabel("备注:"),
+		entryRemark,
 		checkFavorite,
 	))
-	content.SetMinSize(fyne.NewSize(520, 420))
+	content.SetMinSize(fyne.NewSize(520, 500))
 
 	d := dialog.NewCustomConfirm("编辑密码", "保存", "取消", content, func(confirm bool) {
 		if confirm {
@@ -1317,6 +1446,7 @@ func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
 				Category: entryCategory.Text,
 				Username: entryUser.Text,
 				Password: entryPass.Text,
+				Remark:   entryRemark.Text,
 				Favorite: checkFavorite.Checked,
 			})
 			if err != nil {
@@ -1327,7 +1457,7 @@ func showEditVaultItemDialog(item vault.VaultItem, refreshCallback func()) {
 			}
 		}
 	}, myWindow)
-	d.Resize(fyne.NewSize(600, 520))
+	d.Resize(fyne.NewSize(600, 620))
 	d.Show()
 }
 
@@ -1380,10 +1510,10 @@ type BackupData struct {
 	Items    []BackupItemEncrypted `json:"items"`
 }
 
-// BackupItemEncrypted 备份条目 - 密码保持加密状态
+// BackupItemEncrypted 备份条目 - 账号、密码和备注保持加密状态
 type BackupItemEncrypted struct {
 	Site    string `json:"site"`     // 网站名称（明文，用于索引）
-	EncData string `json:"enc_data"` // 加密的用户名和密码（base64编码）
+	EncData string `json:"enc_data"` // 加密的用户名、密码和备注（base64编码）
 }
 
 // performBackup 执行实际的备份操作 - 导出加密的JSON数据（包含用户信息）

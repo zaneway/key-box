@@ -20,6 +20,7 @@ func NewManager(db *db.DB) *Manager {
 type ItemData struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Remark   string `json:"remark,omitempty"`
 }
 
 type ItemInput struct {
@@ -29,6 +30,7 @@ type ItemInput struct {
 	Category string
 	Username string
 	Password string
+	Remark   string
 	Favorite bool
 }
 
@@ -45,6 +47,7 @@ type VaultItem struct {
 	Category  string
 	Username  string
 	Password  string
+	Remark    string
 	Favorite  bool
 	UpdatedAt string
 }
@@ -70,6 +73,7 @@ func (m *Manager) AddDetailedItem(username string, keyC []byte, input ItemInput)
 	data := ItemData{
 		Username: input.Username,
 		Password: input.Password,
+		Remark:   input.Remark,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -108,10 +112,6 @@ func (m *Manager) ListItemsFiltered(username string, keyC []byte, filter ItemFil
 		if category != "" && category != "全部" && row.Category != category {
 			continue
 		}
-		if search != "" && !matchesSearch(row, search) {
-			continue
-		}
-
 		// 解密数据
 		decrypted, err := crypto.DecryptAESGCM(keyC, row.EncData)
 		if err != nil {
@@ -123,7 +123,7 @@ func (m *Manager) ListItemsFiltered(username string, keyC []byte, filter ItemFil
 			return nil, fmt.Errorf("failed to unmarshal item %d: %v", row.ID, err)
 		}
 
-		results = append(results, VaultItem{
+		item := VaultItem{
 			ID:        row.ID,
 			Title:     row.Title,
 			Site:      row.Site,
@@ -131,9 +131,14 @@ func (m *Manager) ListItemsFiltered(username string, keyC []byte, filter ItemFil
 			Category:  row.Category,
 			Username:  data.Username,
 			Password:  data.Password,
+			Remark:    data.Remark,
 			Favorite:  row.Favorite,
 			UpdatedAt: row.UpdatedAt,
-		})
+		}
+		if search != "" && !matchesSearch(item, search) {
+			continue
+		}
+		results = append(results, item)
 	}
 	return results, nil
 }
@@ -158,6 +163,7 @@ func (m *Manager) UpdateDetailedItem(keyC []byte, id int, input ItemInput) error
 	data := ItemData{
 		Username: input.Username,
 		Password: input.Password,
+		Remark:   input.Remark,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -225,6 +231,7 @@ func normalizeInput(input ItemInput) ItemInput {
 	input.URL = strings.TrimSpace(input.URL)
 	input.Category = strings.TrimSpace(input.Category)
 	input.Username = strings.TrimSpace(input.Username)
+	input.Remark = strings.TrimSpace(input.Remark)
 	if input.Site == "" {
 		input.Site = input.Title
 	}
@@ -237,8 +244,8 @@ func normalizeInput(input ItemInput) ItemInput {
 	return input
 }
 
-func matchesSearch(item db.VaultItem, search string) bool {
-	values := []string{item.Title, item.Site, item.URL, item.Category}
+func matchesSearch(item VaultItem, search string) bool {
+	values := []string{item.Title, item.Site, item.URL, item.Category, item.Username, item.Remark}
 	for _, value := range values {
 		if strings.Contains(strings.ToLower(value), search) {
 			return true

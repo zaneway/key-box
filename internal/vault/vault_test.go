@@ -104,6 +104,58 @@ func TestAddDetailedItemStoresMetadataAndSearches(t *testing.T) {
 	}
 }
 
+func TestDetailedItemStoresEncryptedRemarkAndSearchesIt(t *testing.T) {
+	database, err := db.InitDBAt(filepath.Join(t.TempDir(), "key-box.db"))
+	if err != nil {
+		t.Fatalf("InitDBAt() error = %v", err)
+	}
+	defer database.Close()
+
+	keyC, err := crypto.GenerateRandomBytes(32)
+	if err != nil {
+		t.Fatalf("GenerateRandomBytes() error = %v", err)
+	}
+
+	manager := NewManager(database)
+	if err := manager.AddDetailedItem("alice", keyC, ItemInput{
+		Title:    "VPN",
+		Site:     "Corp VPN",
+		Category: "工作",
+		Username: "alice",
+		Password: "secret-password",
+		Remark:   "需要使用硬件令牌审批",
+	}); err != nil {
+		t.Fatalf("AddDetailedItem() error = %v", err)
+	}
+
+	encryptedItems, err := manager.GetEncryptedItems("alice")
+	if err != nil {
+		t.Fatalf("GetEncryptedItems() error = %v", err)
+	}
+	if len(encryptedItems) != 1 {
+		t.Fatalf("len(encryptedItems) = %d, want 1", len(encryptedItems))
+	}
+	if bytes.Contains(encryptedItems[0].EncData, []byte("硬件令牌")) {
+		t.Fatal("encrypted data contains plaintext remark")
+	}
+
+	items, err := manager.ListItems("alice", keyC)
+	if err != nil {
+		t.Fatalf("ListItems() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Remark != "需要使用硬件令牌审批" {
+		t.Fatalf("items = %#v, want decrypted remark", items)
+	}
+
+	searchItems, err := manager.ListItemsFiltered("alice", keyC, ItemFilter{Search: "硬件令牌"})
+	if err != nil {
+		t.Fatalf("ListItemsFiltered(remark search) error = %v", err)
+	}
+	if len(searchItems) != 1 || searchItems[0].Title != "VPN" {
+		t.Fatalf("searchItems = %#v, want VPN item matched by remark", searchItems)
+	}
+}
+
 func TestLegacyAddItemGetsDefaultMetadata(t *testing.T) {
 	database, err := db.InitDBAt(filepath.Join(t.TempDir(), "key-box.db"))
 	if err != nil {
