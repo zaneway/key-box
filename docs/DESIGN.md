@@ -545,7 +545,8 @@ key-box/
 │   └── BACKUP_RESTORE_TESTING.md  # 备份恢复测试指南
 ├── go.mod
 ├── go.sum
-└── README.md             # 用户使用手册
+├── README.md             # 英文用户使用手册
+└── README.zh-CN.md       # 中文用户使用手册
 ```
 
 ### 8.2 编译命令
