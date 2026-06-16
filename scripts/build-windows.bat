@@ -25,7 +25,7 @@ REM 检查 fyne 命令是否可用
 where fyne >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo 正在安装 fyne 命令行工具...
-    go install fyne.io/fyne/v2/cmd/fyne@latest
+    go install fyne.io/tools/cmd/fyne@latest
 )
 
 REM 清理并创建构建目录
@@ -37,7 +37,7 @@ REM 使用 fyne package 打包 Windows 应用
 echo 正在打包 Windows 应用...
 cd /d "%PROJECT_ROOT%"
 
-fyne package --target windows --src cmd/gui --name "%APP_NAME%" --icon "%ICON_FILE%" --app-id "%APP_ID%" --tags sqlite_unlock_notify --release
+fyne package --target windows --src cmd/gui --name "%APP_NAME%" --icon "%ICON_FILE%" --appID "%APP_ID%" --tags sqlite_unlock_notify --release
 
 if %ERRORLEVEL% NEQ 0 (
     echo 打包失败！

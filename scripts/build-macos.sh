@@ -28,7 +28,7 @@ fi
 # 检查 fyne 命令是否可用
 if ! command -v fyne &> /dev/null; then
     echo "正在安装 fyne 命令行工具..."
-    go install fyne.io/fyne/v2/cmd/fyne@latest
+    go install fyne.io/tools/cmd/fyne@latest
 fi
 
 # 检测当前系统架构
@@ -103,7 +103,7 @@ case "$BUILD_ARCH" in
             --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --app-id "$APP_ID" \
+            --appID "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
 
@@ -118,7 +118,7 @@ case "$BUILD_ARCH" in
             --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --app-id "$APP_ID" \
+            --appID "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
 
@@ -154,7 +154,7 @@ case "$BUILD_ARCH" in
             --src cmd/gui \
             --name "$APP_NAME" \
             --icon "$ICON_FILE" \
-            --app-id "$APP_ID" \
+            --appID "$APP_ID" \
             --tags sqlite_unlock_notify \
             --release
         ;;
