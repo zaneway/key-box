@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -50,6 +51,7 @@ func InitDBAt(dbPath string) (*DB, error) {
 // createTables 创建所需的数据库表结构。
 // users: 存储用户元数据和加密后的密钥链。
 // vault: 存储用户加密后的账号密码数据。
+// app_settings: 存储应用级安全配置，不包含密钥或明文密码。
 func (db *DB) createTables() error {
 	usersTable := `
 	CREATE TABLE IF NOT EXISTS users (
@@ -74,10 +76,20 @@ func (db *DB) createTables() error {
 		FOREIGN KEY(username) REFERENCES users(username)
 	);`
 
+	appSettingsTable := `
+	CREATE TABLE IF NOT EXISTS app_settings (
+		key TEXT PRIMARY KEY,
+		value INTEGER NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`
+
 	if _, err := db.Exec(usersTable); err != nil {
 		return err
 	}
 	if _, err := db.Exec(vaultTable); err != nil {
+		return err
+	}
+	if _, err := db.Exec(appSettingsTable); err != nil {
 		return err
 	}
 
@@ -204,6 +216,115 @@ type PasswordVerifier struct {
 	Salt     []byte
 	Verifier []byte
 	KDF      string
+}
+
+const (
+	appSettingAutoLockSeconds            = "auto_lock_seconds"
+	appSettingClipboardProtectionSeconds = "clipboard_protection_seconds"
+
+	defaultAutoLockSeconds            = 600
+	defaultClipboardProtectionSeconds = 30
+)
+
+var (
+	allowedAutoLockSeconds = map[int]bool{
+		0:    true,
+		300:  true,
+		600:  true,
+		1800: true,
+	}
+	allowedClipboardProtectionSeconds = map[int]bool{
+		0:   true,
+		30:  true,
+		60:  true,
+		300: true,
+	}
+)
+
+// AppSettings 保存应用级安全配置。
+// 取值使用秒数，0 表示关闭对应保护，避免本地化文案进入数据库。
+type AppSettings struct {
+	AutoLockSeconds            int `json:"auto_lock_seconds"`
+	ClipboardProtectionSeconds int `json:"clipboard_protection_seconds"`
+}
+
+// DefaultAppSettings 返回默认安全配置。
+func DefaultAppSettings() AppSettings {
+	return AppSettings{
+		AutoLockSeconds:            defaultAutoLockSeconds,
+		ClipboardProtectionSeconds: defaultClipboardProtectionSeconds,
+	}
+}
+
+// AutoLockDuration 返回自动锁定时长，0 表示永不自动锁定。
+func (s AppSettings) AutoLockDuration() time.Duration {
+	return time.Duration(s.AutoLockSeconds) * time.Second
+}
+
+// ClipboardProtectionDuration 返回剪贴板清理时长，0 表示不自动清理。
+func (s AppSettings) ClipboardProtectionDuration() time.Duration {
+	return time.Duration(s.ClipboardProtectionSeconds) * time.Second
+}
+
+// NormalizeAppSettings 将配置限制在产品允许的安全策略枚举内。
+func NormalizeAppSettings(settings AppSettings) AppSettings {
+	defaults := DefaultAppSettings()
+	if !allowedAutoLockSeconds[settings.AutoLockSeconds] {
+		settings.AutoLockSeconds = defaults.AutoLockSeconds
+	}
+	if !allowedClipboardProtectionSeconds[settings.ClipboardProtectionSeconds] {
+		settings.ClipboardProtectionSeconds = defaults.ClipboardProtectionSeconds
+	}
+	return settings
+}
+
+// LoadAppSettings 从数据库读取应用级安全配置，不存在时返回默认配置。
+func (db *DB) LoadAppSettings() (AppSettings, error) {
+	settings := DefaultAppSettings()
+	rows, err := db.Query(`SELECT key, value FROM app_settings WHERE key IN (?, ?)`, appSettingAutoLockSeconds, appSettingClipboardProtectionSeconds)
+	if err != nil {
+		return AppSettings{}, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key string
+		var value int
+		if err := rows.Scan(&key, &value); err != nil {
+			return AppSettings{}, err
+		}
+		switch key {
+		case appSettingAutoLockSeconds:
+			settings.AutoLockSeconds = value
+		case appSettingClipboardProtectionSeconds:
+			settings.ClipboardProtectionSeconds = value
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return AppSettings{}, err
+	}
+	return NormalizeAppSettings(settings), nil
+}
+
+// SaveAppSettings 规范化并保存应用级安全配置。
+func (db *DB) SaveAppSettings(settings AppSettings) error {
+	settings = NormalizeAppSettings(settings)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt := `INSERT INTO app_settings (key, value, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+	if _, err := tx.Exec(stmt, appSettingAutoLockSeconds, settings.AutoLockSeconds); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(stmt, appSettingClipboardProtectionSeconds, settings.ClipboardProtectionSeconds); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) CreateUser(u *User) error {

@@ -33,12 +33,14 @@ import (
 var (
 	myApp        fyne.App
 	myWindow     fyne.Window
+	appDB        *db.DB
 	authService  *auth.Service
 	vaultManager *vault.Manager
 
 	// State
 	currentUser string
 	currentKeyC []byte
+	appSettings = db.DefaultAppSettings()
 
 	// 标志：登录后是否自动打开恢复对话框
 	shouldShowRestoreAfterLogin bool
@@ -73,6 +75,14 @@ func checkEnvAndInit() {
 		dialog.ShowError(fmt.Errorf("数据库初始化失败: %v", err), myWindow)
 		return
 	}
+	appDB = database
+
+	loadedSettings, err := database.LoadAppSettings()
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("读取应用配置失败: %v", err), myWindow)
+		return
+	}
+	appSettings = loadedSettings
 
 	if salt == "" {
 		userCount, err := database.UserCount()
@@ -229,8 +239,13 @@ func showSystemKeyMismatchDialog(retry func()) {
 func startAutoLock() {
 	if autoLockTimer != nil {
 		autoLockTimer.Stop()
+		autoLockTimer = nil
 	}
-	autoLockTimer = time.AfterFunc(10*time.Minute, func() {
+	lockAfter := appSettings.AutoLockDuration()
+	if lockAfter == 0 {
+		return
+	}
+	autoLockTimer = time.AfterFunc(lockAfter, func() {
 		if currentUser == "" {
 			return
 		}
@@ -238,7 +253,7 @@ func startAutoLock() {
 		currentKeyC = nil
 		myWindow.Resize(fyne.NewSize(600, 500))
 		showMainMenu()
-		dialog.ShowInformation("已自动锁定", "应用空闲超过 10 分钟，已返回登录页。", myWindow)
+		dialog.ShowInformation("已自动锁定", "应用空闲超过 "+formatDurationLabel(lockAfter)+"，已返回登录页。", myWindow)
 	})
 }
 
@@ -258,15 +273,15 @@ func copyTextToClipboard(content, label string, clearAfter time.Duration) {
 }
 
 func copyPasswordToClipboard(password string) {
-	copyTextToClipboard(password, "密码", 30*time.Second)
+	copyTextToClipboard(password, "密码", appSettings.ClipboardProtectionDuration())
 }
 
 func copyAccountToClipboard(username string) {
-	copyTextToClipboard(username, "账号", 0)
+	copyTextToClipboard(username, "账号", appSettings.ClipboardProtectionDuration())
 }
 
 func copyRemarkToClipboard(remark string) {
-	copyTextToClipboard(remark, "备注", 0)
+	copyTextToClipboard(remark, "备注", appSettings.ClipboardProtectionDuration())
 }
 
 func createCopyableFixedWidthTextCell(fullText string, maxChars int, width float32, style fyne.TextStyle) fyne.CanvasObject {
@@ -301,7 +316,7 @@ func showSelectableTextDialog(title, contentText string) {
 	content := container.NewBorder(
 		nil,
 		widget.NewButtonWithIcon("复制全部", theme.ContentCopyIcon(), func() {
-			copyTextToClipboard(contentText, title, 0)
+			copyTextToClipboard(contentText, title, appSettings.ClipboardProtectionDuration())
 		}),
 		nil,
 		nil,
@@ -371,29 +386,134 @@ func generatePasswordInto(entry *widget.Entry) {
 	entry.SetText(password)
 }
 
-func showSecurityCenterDialog() {
+type durationOption struct {
+	label   string
+	seconds int
+}
+
+var (
+	autoLockOptions = []durationOption{
+		{label: "5 分钟", seconds: 300},
+		{label: "10 分钟", seconds: 600},
+		{label: "30 分钟", seconds: 1800},
+		{label: "永不", seconds: 0},
+	}
+	clipboardProtectionOptions = []durationOption{
+		{label: "30 秒", seconds: 30},
+		{label: "1 分钟", seconds: 60},
+		{label: "5 分钟", seconds: 300},
+		{label: "永不", seconds: 0},
+	}
+)
+
+func durationOptionLabels(options []durationOption) []string {
+	labels := make([]string, 0, len(options))
+	for _, option := range options {
+		labels = append(labels, option.label)
+	}
+	return labels
+}
+
+func secondsForDurationLabel(options []durationOption, label string) int {
+	for _, option := range options {
+		if option.label == label {
+			return option.seconds
+		}
+	}
+	return options[0].seconds
+}
+
+func durationLabelForSeconds(options []durationOption, seconds int) string {
+	for _, option := range options {
+		if option.seconds == seconds {
+			return option.label
+		}
+	}
+	return options[0].label
+}
+
+func formatDurationLabel(duration time.Duration) string {
+	if duration == 0 {
+		return "永不"
+	}
+	if duration < time.Minute {
+		return fmt.Sprintf("%d 秒", int(duration.Seconds()))
+	}
+	return fmt.Sprintf("%d 分钟", int(duration.Minutes()))
+}
+
+func showConfigCenterDialog() {
 	salt, _ := config.GetSalt()
 	saltStatus := "已配置"
 	if strings.TrimSpace(salt) == "" {
 		saltStatus = "未配置"
 	}
 
+	tabs := container.NewAppTabs(
+		container.NewTabItemWithIcon("系统配置", theme.SettingsIcon(), createSystemConfigContent(saltStatus)),
+		container.NewTabItemWithIcon("密码修改", theme.AccountIcon(), createPasswordChangeContent()),
+	)
+	tabs.SetTabLocation(container.TabLocationTop)
+
+	d := dialog.NewCustom("配置中心", "关闭", tabs, myWindow)
+	d.Resize(fyne.NewSize(620, 500))
+	d.Show()
+}
+
+func createSystemConfigContent(saltStatus string) fyne.CanvasObject {
+	settings := appSettings
+
+	autoLockSelect := widget.NewSelect(durationOptionLabels(autoLockOptions), nil)
+	autoLockSelect.SetSelected(durationLabelForSeconds(autoLockOptions, settings.AutoLockSeconds))
+	clipboardSelect := widget.NewSelect(durationOptionLabels(clipboardProtectionOptions), nil)
+	clipboardSelect.SetSelected(durationLabelForSeconds(clipboardProtectionOptions, settings.ClipboardProtectionSeconds))
+
+	content := container.NewVScroll(container.NewVBox(
+		widget.NewLabelWithStyle("系统配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewLabel("当前用户: "+currentUser),
+		widget.NewLabel("SEC_APP_SALT: "+saltStatus),
+		widget.NewSeparator(),
+		widget.NewLabel("自动锁定时间"),
+		autoLockSelect,
+		widget.NewLabel("剪贴板保护时长"),
+		clipboardSelect,
+		widget.NewButtonWithIcon("保存系统配置", theme.DocumentSaveIcon(), func() {
+			nextSettings := db.AppSettings{
+				AutoLockSeconds:            secondsForDurationLabel(autoLockOptions, autoLockSelect.Selected),
+				ClipboardProtectionSeconds: secondsForDurationLabel(clipboardProtectionOptions, clipboardSelect.Selected),
+			}
+			if appDB == nil {
+				dialog.ShowError(fmt.Errorf("数据库未初始化"), myWindow)
+				return
+			}
+			if err := appDB.SaveAppSettings(nextSettings); err != nil {
+				dialog.ShowError(fmt.Errorf("保存系统配置失败: %v", err), myWindow)
+				return
+			}
+			appSettings = db.NormalizeAppSettings(nextSettings)
+			if currentUser != "" {
+				startAutoLock()
+			}
+			dialog.ShowInformation("成功", "系统配置已保存", myWindow)
+		}),
+		widget.NewSeparator(),
+		widget.NewLabel("配置保存在本地数据库中，备份数据时会随账户配置一起导出。"),
+	))
+	content.SetMinSize(fyne.NewSize(540, 360))
+	return content
+}
+
+func createPasswordChangeContent() fyne.CanvasObject {
 	entryPassword := widget.NewPasswordEntry()
 	entryPassword.PlaceHolder = "新登录密码"
 	entryConfirm := widget.NewPasswordEntry()
 	entryConfirm.PlaceHolder = "确认新登录密码"
 
 	content := container.NewVScroll(container.NewVBox(
-		widget.NewLabelWithStyle("安全状态", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewLabel("当前用户: "+currentUser),
-		widget.NewLabel("SEC_APP_SALT: "+saltStatus),
-		widget.NewLabel("自动锁定: 10 分钟"),
-		widget.NewLabel("剪贴板保护: 复制密码 30 秒后自动清理"),
-		widget.NewSeparator(),
 		widget.NewLabelWithStyle("修改登录密码", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		entryPassword,
 		entryConfirm,
-		widget.NewButton("保存新登录密码", func() {
+		widget.NewButtonWithIcon("保存新登录密码", theme.DocumentSaveIcon(), func() {
 			if entryPassword.Text == "" {
 				dialog.ShowError(fmt.Errorf("新登录密码不能为空"), myWindow)
 				return
@@ -411,11 +531,8 @@ func showSecurityCenterDialog() {
 		widget.NewSeparator(),
 		widget.NewLabel("建议：修改重要密码后及时备份，并妥善保管 ~/.key-box.config。"),
 	))
-	content.SetMinSize(fyne.NewSize(480, 420))
-
-	d := dialog.NewCustom("安全中心", "关闭", content, myWindow)
-	d.Resize(fyne.NewSize(560, 500))
-	d.Show()
+	content.SetMinSize(fyne.NewSize(540, 360))
+	return content
 }
 
 func showMainMenu() {
@@ -987,8 +1104,8 @@ func showVaultScreen() {
 		showCategoryDialog()
 	})
 
-	btnSecurity := widget.NewButtonWithIcon("安全中心", theme.SettingsIcon(), func() {
-		showSecurityCenterDialog()
+	btnSecurity := widget.NewButtonWithIcon("配置中心", theme.SettingsIcon(), func() {
+		showConfigCenterDialog()
 	})
 
 	btnLogout := widget.NewButtonWithIcon("退出", theme.LogoutIcon(), func() {
@@ -1507,6 +1624,7 @@ type BackupData struct {
 	ExportAt string                `json:"export_at"`
 	Username string                `json:"username"`
 	User     BackupUserInfo        `json:"user"`
+	Settings *db.AppSettings       `json:"settings,omitempty"`
 	Items    []BackupItemEncrypted `json:"items"`
 }
 
@@ -1531,11 +1649,21 @@ func performBackup() {
 		dialog.ShowError(fmt.Errorf("读取数据失败: %v", err), myWindow)
 		return
 	}
+	settings := appSettings
+	if appDB != nil {
+		loadedSettings, err := appDB.LoadAppSettings()
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("读取系统配置失败: %v", err), myWindow)
+			return
+		}
+		settings = loadedSettings
+	}
 
 	// 构造备份数据
 	backup := BackupData{
-		Version:  "2.0", // 版本号升级，包含用户信息
+		Version:  "2.1", // 包含用户信息、系统配置和加密密码数据
 		ExportAt: time.Now().Format("2006-01-02 15:04:05"),
+		Username: user.Username,
 		User: BackupUserInfo{
 			Username:  user.Username,
 			Salt:      hex.EncodeToString(user.Salt),
@@ -1546,7 +1674,8 @@ func performBackup() {
 			EncB:      hex.EncodeToString(user.EncB),
 			EncC:      hex.EncodeToString(user.EncC),
 		},
-		Items: make([]BackupItemEncrypted, 0, len(dbItems)),
+		Settings: &settings,
+		Items:    make([]BackupItemEncrypted, 0, len(dbItems)),
 	}
 
 	for _, item := range dbItems {
@@ -1620,6 +1749,28 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+func supportedBackupVersion(version string) bool {
+	return version == "2.0" || version == "2.1"
+}
+
+func restoreBackupSettings(settings *db.AppSettings) (bool, error) {
+	if settings == nil {
+		return false, nil
+	}
+	if appDB == nil {
+		return false, fmt.Errorf("数据库未初始化")
+	}
+	normalized := db.NormalizeAppSettings(*settings)
+	if err := appDB.SaveAppSettings(normalized); err != nil {
+		return false, err
+	}
+	appSettings = normalized
+	if currentUser != "" {
+		startAutoLock()
+	}
+	return true, nil
+}
+
 // showRestoreDialogBeforeLogin 登录前显示恢复对话框
 func showRestoreDialogBeforeLogin() {
 	currentSalt, _ := config.GetSalt()
@@ -1685,10 +1836,8 @@ func performRestoreWithoutLogin() {
 			dialog.ShowError(fmt.Errorf("备份文件格式错误: %v", err), myWindow)
 			return
 		}
-
-		// 检查版本
-		if backup.Version != "2.0" {
-			dialog.ShowError(fmt.Errorf("备份文件版本不支持（需要 v2.0）"), myWindow)
+		if !supportedBackupVersion(backup.Version) {
+			dialog.ShowError(fmt.Errorf("备份文件版本不支持（需要 v2.0 或 v2.1）"), myWindow)
 			return
 		}
 
@@ -1717,12 +1866,12 @@ func performRestoreWithoutLogin() {
 						authService.DeleteUser(backup.User.Username)
 						vaultManager.DeleteAllItems(backup.User.Username)
 						// 继续恢复
-						continueRestore(user, backup.Items)
+						continueRestore(user, backup.Items, backup.Settings)
 					}
 				}, myWindow)
 		} else {
 			// 用户不存在，直接恢复
-			continueRestore(user, backup.Items)
+			continueRestore(user, backup.Items, backup.Settings)
 		}
 	}, myWindow)
 
@@ -1736,10 +1885,15 @@ func mustDecodeHex(s string) []byte {
 }
 
 // continueRestore 继续恢复流程
-func continueRestore(user *db.User, items []BackupItemEncrypted) {
+func continueRestore(user *db.User, items []BackupItemEncrypted, settings *db.AppSettings) {
 	// 创建用户
 	if err := authService.RestoreUser(user); err != nil {
 		dialog.ShowError(fmt.Errorf("恢复用户失败: %v", err), myWindow)
+		return
+	}
+	settingsRestored, err := restoreBackupSettings(settings)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("恢复系统配置失败: %v", err), myWindow)
 		return
 	}
 
@@ -1771,6 +1925,9 @@ func continueRestore(user *db.User, items []BackupItemEncrypted) {
 		} else {
 			restoreResult = fmt.Sprintf("账户 '%s' 恢复成功！\n成功导入 %d 条密码记录\n\n请使用原 TOTP 登录", user.Username, successCount)
 		}
+	}
+	if settingsRestored {
+		restoreResult += "\n\n系统配置已恢复。"
 	}
 	showRestoreResultDialog(restoreResult, currentSalt)
 }
@@ -1841,6 +1998,15 @@ func performRestore() {
 			dialog.ShowError(fmt.Errorf("备份文件格式错误: %v", err), myWindow)
 			return
 		}
+		if !supportedBackupVersion(backup.Version) {
+			dialog.ShowError(fmt.Errorf("备份文件版本不支持（需要 v2.0 或 v2.1）"), myWindow)
+			return
+		}
+		settingsRestored, err := restoreBackupSettings(backup.Settings)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("恢复系统配置失败: %v", err), myWindow)
+			return
+		}
 
 		// 逐条导入加密数据
 		successCount := 0
@@ -1863,13 +2029,17 @@ func performRestore() {
 		}
 
 		// 显示结果
+		settingsMessage := ""
+		if settingsRestored {
+			settingsMessage = "\n系统配置已恢复。"
+		}
 		if failCount > 0 {
 			dialog.ShowInformation("恢复完成",
-				fmt.Sprintf("成功导入: %d 条\n失败: %d 条\n\n请刷新列表查看", successCount, failCount),
+				fmt.Sprintf("成功导入: %d 条\n失败: %d 条%s\n\n请刷新列表查看", successCount, failCount, settingsMessage),
 				myWindow)
 		} else {
 			dialog.ShowInformation("恢复成功",
-				fmt.Sprintf("成功导入 %d 条密码记录！", successCount),
+				fmt.Sprintf("成功导入 %d 条密码记录！%s", successCount, settingsMessage),
 				myWindow)
 		}
 
