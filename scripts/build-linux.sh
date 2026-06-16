@@ -126,6 +126,7 @@ DESKTOP
 
     # 复制文档
     cp "$PROJECT_DIR/README.md" "$DEB_GUI_DIR/usr/share/doc/$APP_NAME-gui/" 2>/dev/null || true
+    cp "$PROJECT_DIR/README.zh-CN.md" "$DEB_GUI_DIR/usr/share/doc/$APP_NAME-gui/" 2>/dev/null || true
 
     # 计算 MD5
     cd "$DEB_GUI_DIR"
@@ -168,6 +169,7 @@ EOF
 
     # 复制文档
     cp "$PROJECT_DIR/README.md" "$DEB_CLI_DIR/usr/share/doc/$APP_NAME-cli/" 2>/dev/null || true
+    cp "$PROJECT_DIR/README.zh-CN.md" "$DEB_CLI_DIR/usr/share/doc/$APP_NAME-cli/" 2>/dev/null || true
 
     # 计算 MD5
     cd "$DEB_CLI_DIR"
@@ -186,6 +188,7 @@ else
     mkdir -p "$GUI_DIR"
     cp "$BUILD_DIR/key-box-gui" "$GUI_DIR/"
     cp "$PROJECT_DIR/README.md" "$GUI_DIR/" 2>/dev/null || true
+    cp "$PROJECT_DIR/README.zh-CN.md" "$GUI_DIR/" 2>/dev/null || true
     if [ -f "$PROJECT_DIR/key-box.png" ]; then
         cp "$PROJECT_DIR/key-box.png" "$GUI_DIR/"
     fi
@@ -272,6 +275,7 @@ EOF
     mkdir -p "$CLI_DIR"
     cp "$BUILD_DIR/key-box-cli" "$CLI_DIR/"
     cp "$PROJECT_DIR/README.md" "$CLI_DIR/" 2>/dev/null || true
+    cp "$PROJECT_DIR/README.zh-CN.md" "$CLI_DIR/" 2>/dev/null || true
 
     cat > "$CLI_DIR/install.sh" << 'EOF'
 #!/bin/bash
