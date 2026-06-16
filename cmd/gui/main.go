@@ -246,14 +246,16 @@ func startAutoLock() {
 		return
 	}
 	autoLockTimer = time.AfterFunc(lockAfter, func() {
-		if currentUser == "" {
-			return
-		}
-		currentUser = ""
-		currentKeyC = nil
-		myWindow.Resize(fyne.NewSize(600, 500))
-		showMainMenu()
-		dialog.ShowInformation("已自动锁定", "应用空闲超过 "+formatDurationLabel(lockAfter)+"，已返回登录页。", myWindow)
+		fyne.Do(func() {
+			if currentUser == "" {
+				return
+			}
+			currentUser = ""
+			currentKeyC = nil
+			myWindow.Resize(fyne.NewSize(600, 500))
+			showMainMenu()
+			dialog.ShowInformation("已自动锁定", "应用空闲超过 "+formatDurationLabel(lockAfter)+"，已返回登录页。", myWindow)
+		})
 	})
 }
 
@@ -364,9 +366,11 @@ func createRemarkCell(remark string, maxChars int, width float32) fyne.CanvasObj
 
 func clearClipboardAfter(content string, delay time.Duration) {
 	time.AfterFunc(delay, func() {
-		if myWindow.Clipboard().Content() == content {
-			myWindow.Clipboard().SetContent("")
-		}
+		fyne.Do(func() {
+			if myWindow.Clipboard().Content() == content {
+				myWindow.Clipboard().SetContent("")
+			}
+		})
 	})
 }
 
@@ -642,7 +646,9 @@ func createLoginContent() fyne.CanvasObject {
 			showVaultScreen()
 			// 稍后打开恢复对话框
 			time.AfterFunc(500*time.Millisecond, func() {
-				showRestoreDialog()
+				fyne.Do(func() {
+					showRestoreDialog()
+				})
 			})
 		} else {
 			showVaultScreen()
