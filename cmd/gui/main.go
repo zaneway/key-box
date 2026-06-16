@@ -1205,9 +1205,9 @@ func showVaultScreen() {
 				container.NewHBox(
 					col1Box,
 					col2Box,
-					colRemarkBox,
 					col3Box,
 					col4Label,
+					colRemarkBox,
 				),
 			)
 			listContainer.Add(headerContent)
@@ -1301,20 +1301,20 @@ func showVaultScreen() {
 				// 第二列：账号 - 固定宽度，支持复制，超长文本可点击查看
 				usernameCell := createCopyableFixedWidthTextCell(item.Username, 12, col2Width, fyne.TextStyle{})
 
-				// 第三列：备注 - 固定宽度，支持直接复制和选择复制
-				remarkCell := createRemarkCell(item.Remark, 16, colRemarkWidth)
-
-				// 第四列：密码 - 固定宽度容器
+				// 第三列：密码 - 固定宽度容器
 				col3Spacer := canvas.NewRectangle(color.Transparent)
 				col3Spacer.SetMinSize(fyne.NewSize(col3Width, 1))
 				passBox := container.NewStack(col3Spacer, passColumn)
 
+				// 最后一列：备注 - 固定宽度，支持直接复制和选择复制
+				remarkCell := createRemarkCell(item.Remark, 16, colRemarkWidth)
+
 				cardContent := container.NewHBox(
 					siteCell,
 					usernameCell,
-					remarkCell,
 					passBox,
 					actionButtons,
+					remarkCell,
 				)
 
 				// 添加卡片
