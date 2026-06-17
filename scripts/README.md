@@ -203,6 +203,39 @@ sudo yum install rpm-build
 
 下载并安装：https://jrsoftware.org/isdl.php
 
+### macOS/Linux 交叉编译 Windows 失败: clang 不支持 -mthreads
+
+如果执行 `build-windows.sh` 时出现类似错误：
+
+```text
+clang: error: unsupported option '-mthreads' for target 'arm64-apple-darwin'
+```
+
+说明 CGO 使用了宿主机默认 C 编译器，而不是 MinGW 交叉编译器。脚本默认使用：
+
+```bash
+x86_64-w64-mingw32-gcc
+x86_64-w64-mingw32-g++
+```
+
+安装依赖：
+
+```bash
+# macOS
+brew install mingw-w64
+
+# Ubuntu/Debian
+sudo apt-get install gcc-mingw-w64 g++-mingw-w64
+```
+
+如果本机编译器名称不同，可显式指定：
+
+```bash
+MINGW_CC=/path/to/x86_64-w64-mingw32-gcc \
+MINGW_CXX=/path/to/x86_64-w64-mingw32-g++ \
+bash scripts/build-windows.sh
+```
+
 ### Fyne GUI 无法运行
 
 **macOS**：可能需要在"系统偏好设置 > 安全性与隐私"中允许运行

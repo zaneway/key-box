@@ -32,6 +32,8 @@ REM 清理并创建构建目录
 echo 清理构建目录...
 if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 mkdir "%BUILD_DIR%"
+if exist "%PROJECT_ROOT%\%APP_NAME%.exe" del /q "%PROJECT_ROOT%\%APP_NAME%.exe"
+if exist "%PROJECT_ROOT%\cmd\gui\%APP_NAME%.exe" del /q "%PROJECT_ROOT%\cmd\gui\%APP_NAME%.exe"
 
 REM 使用 fyne package 打包 Windows 应用
 echo 正在打包 Windows 应用...
@@ -45,8 +47,11 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM 移动生成的文件
-if exist "%APP_NAME%.exe" (
-    move "%APP_NAME%.exe" "%BUILD_DIR%\"
+set "OUTPUT_EXE=%PROJECT_ROOT%\%APP_NAME%.exe"
+if not exist "%OUTPUT_EXE%" if exist "%PROJECT_ROOT%\cmd\gui\%APP_NAME%.exe" set "OUTPUT_EXE=%PROJECT_ROOT%\cmd\gui\%APP_NAME%.exe"
+
+if exist "%OUTPUT_EXE%" (
+    move "%OUTPUT_EXE%" "%BUILD_DIR%\"
     echo 已生成: %BUILD_DIR%\%APP_NAME%.exe
 
     REM 创建安装包目录

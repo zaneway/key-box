@@ -11,6 +11,8 @@ APP_NAME="Key-Box"
 APP_ID="com.keybox.app"
 ICON_FILE="${PROJECT_ROOT}/key-box.png"
 BUILD_DIR="${PROJECT_ROOT}/dist/windows"
+MINGW_CC="${MINGW_CC:-x86_64-w64-mingw32-gcc}"
+MINGW_CXX="${MINGW_CXX:-x86_64-w64-mingw32-g++}"
 
 echo "======================================"
 echo "  Key-Box Windows 打包脚本"
@@ -28,10 +30,29 @@ if ! command -v fyne &> /dev/null; then
     go install fyne.io/tools/cmd/fyne@latest
 fi
 
+# Windows 交叉编译包含 CGO 代码，必须显式使用 MinGW 编译器。
+# 否则在 macOS 上 Go 会回退到 clang，导致 clang 解析 Windows 参数 -mthreads 失败。
+if ! command -v "$MINGW_CC" &> /dev/null; then
+    echo "错误: 未找到 MinGW C 编译器: $MINGW_CC"
+    echo "在 Ubuntu/Debian 上安装: sudo apt-get install gcc-mingw-w64"
+    echo "在 macOS 上安装: brew install mingw-w64"
+    echo "如需使用自定义编译器，可设置 MINGW_CC 环境变量"
+    exit 1
+fi
+
+if ! command -v "$MINGW_CXX" &> /dev/null; then
+    echo "错误: 未找到 MinGW C++ 编译器: $MINGW_CXX"
+    echo "在 Ubuntu/Debian 上安装: sudo apt-get install g++-mingw-w64"
+    echo "在 macOS 上安装: brew install mingw-w64"
+    echo "如需使用自定义编译器，可设置 MINGW_CXX 环境变量"
+    exit 1
+fi
+
 # 清理并创建构建目录
 echo "清理构建目录..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
+rm -f "$PROJECT_ROOT/$APP_NAME.exe" "$PROJECT_ROOT/cmd/gui/$APP_NAME.exe"
 
 # 使用 fyne package 打包 Windows 应用 (需要 Windows 特定的图标文件)
 echo "注意: Windows 需要专门的 .ico 图标文件"
@@ -47,9 +68,10 @@ fi
 # 使用 fyne package 打包 Windows 应用
 echo "正在打包 Windows 应用..."
 cd "$PROJECT_ROOT"
+echo "使用交叉编译器: CC=$MINGW_CC CXX=$MINGW_CXX"
 
 # 尝试使用 PNG 图标（Fyne 会自动转换，但需要特定工具）
-GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC="$MINGW_CC" CXX="$MINGW_CXX" \
 fyne package \
     --target windows \
     --src cmd/gui \
@@ -64,9 +86,14 @@ fyne package \
     exit 1
 }
 
-# 移动生成的文件
-if [ -f "$APP_NAME.exe" ]; then
-    mv "$APP_NAME.exe" "$BUILD_DIR/"
+# 移动生成的文件。不同 Fyne CLI 版本在使用 --src 时可能输出到项目根目录或 source dir。
+OUTPUT_EXE="$APP_NAME.exe"
+if [ ! -f "$OUTPUT_EXE" ] && [ -f "cmd/gui/$APP_NAME.exe" ]; then
+    OUTPUT_EXE="cmd/gui/$APP_NAME.exe"
+fi
+
+if [ -f "$OUTPUT_EXE" ]; then
+    mv "$OUTPUT_EXE" "$BUILD_DIR/"
     echo "已生成: $BUILD_DIR/$APP_NAME.exe"
 
     # 创建安装包目录
